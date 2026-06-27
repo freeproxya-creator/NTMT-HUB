@@ -994,7 +994,6 @@ function loadConfig()
     sessionStart = os.time()
 end
 loadConfig()
-task.defer(clearVisualDupes)
 
 
 function getRoot()
@@ -2934,6 +2933,7 @@ function clearVisualDupes()
     stripDupes(LocalPlayer:FindFirstChild("Backpack"))
     stripDupes(LocalPlayer.Character)
 end
+task.defer(clearVisualDupes)
 
 function visualDupeHeldItem()
     if not genv.ftgs_VisualDupe then return end
