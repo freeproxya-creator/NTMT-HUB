@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.2 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.2")
+--[[ NTMT HUB - Grow a Garden 2 v6.3 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.3")
 
 pcall(function()
     if delfile and isfile then
@@ -524,11 +524,42 @@ local function universalHttpGet(url)
 end
 
 local function httpPost(url, body)
+    if type(url) ~= "string" or url == "" or type(body) ~= "string" then return false end
     local req = (syn and syn.request) or (http and http.request) or http_request or request
-    if type(req) ~= "function" then return false end
-    return xpcall(function()
-        req({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body })
-    end, noopErr)
+    if fluxus and fluxus.request then req = fluxus.request end
+    if type(req) == "function" then
+        local ok, res = xpcall(function()
+            return req({
+                Url = url,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json", ["content-type"] = "application/json" },
+                Body = body,
+            })
+        end, noopErr)
+        if ok then
+            local code = res and (res.StatusCode or res.status or res.Status)
+            if type(code) == "number" then return code >= 200 and code < 300 end
+            return true
+        end
+    end
+    if type(game.HttpPost) == "function" then
+        return xpcall(function()
+            game:HttpPost(url, body, Enum.HttpContentType.ApplicationJson, false)
+        end, noopErr)
+    end
+    local hs = game:GetService("HttpService")
+    if hs and type(hs.RequestAsync) == "function" then
+        local ok = xpcall(function()
+            hs:RequestAsync({
+                Url = url,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = body,
+            })
+        end, noopErr)
+        if ok then return true end
+    end
+    return false
 end
 
 local WindUI
@@ -610,6 +641,7 @@ Services = {
     TeleportService = cloneref(game:GetService("TeleportService")),
     HttpService = cloneref(game:GetService("HttpService")),
     RunService = cloneref(game:GetService("RunService")),
+    Lighting = cloneref(game:GetService("Lighting")),
 }
 
 LocalPlayer = Services.Players.LocalPlayer or Services.Players.PlayerAdded:Wait()
@@ -664,6 +696,9 @@ if type(GearShopData) ~= "table" or type(GearShopData.Data) ~= "table" then hubW
 
 StockItems = Services.ReplicatedStorage:WaitForChild("StockValues"):WaitForChild("SeedShop"):WaitForChild("Items")
 GearStockItems = Services.ReplicatedStorage:WaitForChild("StockValues"):WaitForChild("GearShop"):WaitForChild("Items")
+SeedShopFolder = StockItems.Parent
+GearShopFolder = GearStockItems.Parent
+StockValuesRoot = SeedShopFolder.Parent
 
 SeedDataByName, SeedNames, GearNames, GearDataByName = {}, {}, {}, {}
 for _, info in ipairs(SeedData) do
@@ -776,6 +811,8 @@ genv.ftgs_AutoUnfavoriteSelect = false
 genv.ftgs_AutoFavoriteAll = false
 genv.ftgs_AutoUnfavoriteAll = false
 genv.ftgs_BypassMovement = true
+genv.ftgs_Fullbright = false
+genv.ftgs_FruitESP = true
 genv.ftgs_AntiHit = false
 genv.ftgs_AntiStealGuard = false
 genv.ftgs_AutoHop = false
@@ -792,7 +829,13 @@ selectedFindPet = "Unicorn"
 selectedFavoriteFruit = SeedNames[1] or "Carrot"
 selectedUITheme = "Black"
 desiredWalkSpeed, desiredJumpPower = 16, 50
-webhookUrl, webhookIntervalMin, inputJobId = "", 5, ""
+webhookUrl, webhookPetShopUrl, webhookIntervalMin, inputJobId = "", "", 5, ""
+lastShopRestockToken = nil
+shopWebhookDebounce = 0
+lastStockSnapshot = {}
+fruitEspFolder, fruitEspHighlight, fruitEspBillboard = nil, nil, nil
+savedLighting, fullbrightStepConn = nil, nil
+movementHumConn, movementJumpConn = nil, nil
 
 BoughtSeeds, BoughtGears, BoughtPets = {}, {}, {}
 StolenFruits = {}
@@ -814,6 +857,7 @@ function saveConfig()
     xpcall(function()
         writefile(CONFIG_FILE, Services.HttpService:JSONEncode({
             webhookUrl = webhookUrl,
+            webhookPetShopUrl = webhookPetShopUrl,
             webhookIntervalMin = webhookIntervalMin,
             autoWebhook = genv.ftgs_AutoWebhook == true,
             uiTheme = selectedUITheme,
@@ -834,12 +878,14 @@ end
 
 function loadConfig()
     if type(genv.ftgs_webhookUrl) == "string" and genv.ftgs_webhookUrl ~= "" then webhookUrl = genv.ftgs_webhookUrl end
+    if type(genv.ftgs_webhookPetShopUrl) == "string" then webhookPetShopUrl = genv.ftgs_webhookPetShopUrl end
     if type(genv.ftgs_webhookIntervalMin) == "number" then webhookIntervalMin = genv.ftgs_webhookIntervalMin end
     if type(genv.ftgs_uiTheme) == "string" then selectedUITheme = genv.ftgs_uiTheme end
     if not (readfile and isfile and isfile(CONFIG_FILE)) then return end
     local ok, data = xpcall(function() return Services.HttpService:JSONDecode(readfile(CONFIG_FILE)) end, noopErr)
     if not ok or type(data) ~= "table" then return end
     if type(data.webhookUrl) == "string" then webhookUrl = data.webhookUrl end
+    if type(data.webhookPetShopUrl) == "string" then webhookPetShopUrl = data.webhookPetShopUrl end
     webhookIntervalMin = tonumber(data.webhookIntervalMin) or webhookIntervalMin
     if data.autoWebhook ~= nil then genv.ftgs_AutoWebhook = data.autoWebhook == true end
     if type(data.uiTheme) == "string" then selectedUITheme = data.uiTheme end
@@ -1199,7 +1245,7 @@ function stickToPosition(pos)
         hrp.AssemblyAngularVelocity = Vector3.zero
         hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
     end
-    if hum and isCatchingPet then hum.PlatformStand = true end
+    if hum and (isCatchingPet or collectingMutation) then hum.PlatformStand = true end
 end
 
 function getWildPetPosition(pick)
@@ -2410,9 +2456,396 @@ function buildWebhookEmbed()
     }
 end
 
+function formatMinutesSeconds(totalSec)
+    totalSec = math.max(0, math.floor(totalSec or 0))
+    return string.format("%dm%02ds", math.floor(totalSec / 60), totalSec % 60)
+end
+
+function hubNotify(title, content)
+    if type(WindUI) == "table" and type(WindUI.Notify) == "function" then
+        xpcall(function()
+            WindUI:Notify({ Title = title, Content = content, Icon = "bell", Duration = 4 })
+        end, noopErr)
+    end
+end
+
+function bindCharacterMovement(char)
+    if not char then return end
+    task.spawn(function()
+        local hum = char:WaitForChild("Humanoid", 8)
+        if not hum then return end
+        applyMovement()
+        if movementHumConn then movementHumConn:Disconnect() end
+        if movementJumpConn then movementJumpConn:Disconnect() end
+        movementHumConn = hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+            if hum.WalkSpeed ~= desiredWalkSpeed then hum.WalkSpeed = desiredWalkSpeed end
+        end)
+        movementJumpConn = hum:GetPropertyChangedSignal("JumpPower"):Connect(function()
+            if hum.JumpPower ~= desiredJumpPower then hum.JumpPower = desiredJumpPower end
+        end)
+    end)
+end
+
+function applyMovement()
+    local hum = getHumanoid()
+    if not hum then return end
+    hum.UseJumpPower = true
+    if hum.WalkSpeed ~= desiredWalkSpeed then hum.WalkSpeed = desiredWalkSpeed end
+    if hum.JumpPower ~= desiredJumpPower then hum.JumpPower = desiredJumpPower end
+end
+
+function applyMovementBypass(dt)
+    if not genv.ftgs_BypassMovement then return end
+    if movementBypass or gardenActionLock or isCatchingPet or stealBusy or collectingMutation then return end
+    local hum = getHumanoid()
+    local hrp = getRoot()
+    if not hum or not hrp then return end
+    applyMovement()
+    local dir = hum.MoveDirection
+    if dir.Magnitude > 0.05 and desiredWalkSpeed > 16 then
+        local flat = Vector3.new(dir.X, 0, dir.Z)
+        if flat.Magnitude > 0.01 then
+            flat = flat.Unit
+            local speed = desiredWalkSpeed
+            hrp.AssemblyLinearVelocity = Vector3.new(flat.X * speed, hrp.AssemblyLinearVelocity.Y, flat.Z * speed)
+            lastKnownMoveCF = hrp.CFrame
+        end
+    elseif dir.Magnitude <= 0.05 then
+        hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+end
+
+function playerHasShovelEquipped(plr)
+    local char = plr and plr.Character
+    if not char then return false end
+    for _, item in char:GetChildren() do
+        if item:IsA("Tool") and (item:GetAttribute("Shovel") or string.find(item.Name, "Shovel", 1, true)) then
+            return true
+        end
+    end
+    return false
+end
+
+function tryAntiShovelKnockback()
+    if not genv.ftgs_AntiHit then return end
+    if movementBypass or gardenActionLock or isCatchingPet or stealBusy then return end
+    local hrp = getRoot()
+    local hum = getHumanoid()
+    if not hrp or not hum then return end
+    local shovelNearby = false
+    for _, plr in Services.Players:GetPlayers() do
+        if plr ~= LocalPlayer and playerHasShovelEquipped(plr) then
+            local ohrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+            if ohrp and (ohrp.Position - hrp.Position).Magnitude <= 50 then
+                shovelNearby = true
+                break
+            end
+        end
+    end
+    local vel = hrp.AssemblyLinearVelocity
+    local knocked = vel.Magnitude > 45 or math.abs(vel.Y) > 35
+    if shovelNearby or knocked then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        if hum:GetState() == Enum.HumanoidStateType.Physics or hum:GetState() == Enum.HumanoidStateType.Freefall then
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end
+end
+
+function setFullbright(on)
+    genv.ftgs_Fullbright = on == true
+    local light = Services.Lighting
+    if genv.ftgs_Fullbright then
+        if not savedLighting then
+            savedLighting = {
+                Brightness = light.Brightness,
+                ClockTime = light.ClockTime,
+                FogEnd = light.FogEnd,
+                GlobalShadows = light.GlobalShadows,
+                Ambient = light.Ambient,
+                OutdoorAmbient = light.OutdoorAmbient,
+            }
+        end
+        light.Brightness = 3
+        light.ClockTime = 14
+        light.FogEnd = 100000
+        light.GlobalShadows = false
+        light.Ambient = Color3.fromRGB(255, 255, 255)
+        light.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+        for _, child in light:GetChildren() do
+            if child:IsA("Atmosphere") then child.Density = 0 end
+        end
+        if fullbrightStepConn then fullbrightStepConn:Disconnect() end
+        fullbrightStepConn = Services.RunService.RenderStepped:Connect(function()
+            if genv.ftgs_Fullbright then light.ClockTime = 14 end
+        end)
+    else
+        if fullbrightStepConn then fullbrightStepConn:Disconnect() fullbrightStepConn = nil end
+        if savedLighting then
+            for k, v in savedLighting do light[k] = v end
+        end
+    end
+end
+
+function clearFruitEsp()
+    if fruitEspHighlight then fruitEspHighlight:Destroy() fruitEspHighlight = nil end
+    if fruitEspBillboard then fruitEspBillboard:Destroy() fruitEspBillboard = nil end
+end
+
+function ensureFruitEspFolder()
+    if fruitEspFolder and fruitEspFolder.Parent then return fruitEspFolder end
+    fruitEspFolder = Services.Workspace:FindFirstChild("NTMT_FruitESP")
+    if not fruitEspFolder then
+        fruitEspFolder = Instance.new("Folder")
+        fruitEspFolder.Name = "NTMT_FruitESP"
+        fruitEspFolder.Parent = Services.Workspace
+    end
+    return fruitEspFolder
+end
+
+function findHighestValueFruitTarget()
+    local bestFruit, bestVal, bestPart
+    if not Gardens then return nil end
+    for _, plot in Gardens:GetChildren() do
+        local plants = plot:FindFirstChild("Plants")
+        if not plants then continue end
+        for _, plant in plants:GetChildren() do
+            local fruits = plant:FindFirstChild("Fruits")
+            local scan = fruits and fruits:GetChildren() or { plant }
+            for _, fr in scan do
+                local part = fr:IsA("BasePart") and fr or fr:FindFirstChildWhichIsA("BasePart", true)
+                if part then
+                    local val = calculateStealValue(fr)
+                    if not bestVal or val > bestVal then
+                        bestFruit, bestVal, bestPart = fr, val, part
+                    end
+                end
+            end
+        end
+    end
+    if bestFruit then return bestFruit, bestPart, bestVal end
+    return nil
+end
+
+function updateFruitEsp()
+    if not genv.ftgs_FruitESP then
+        clearFruitEsp()
+        return
+    end
+    local fruit, part, val = findHighestValueFruitTarget()
+    if not fruit or not part then
+        clearFruitEsp()
+        return
+    end
+    ensureFruitEspFolder()
+    if fruitEspHighlight and fruitEspHighlight.Adornee == fruit then
+        if fruitEspBillboard then
+            local label = fruitEspBillboard:FindFirstChild("ValueLabel")
+            if label and label:IsA("TextLabel") then label.Text = tostring(math.floor(val or 0)) end
+        end
+        return
+    end
+    clearFruitEsp()
+    fruitEspHighlight = Instance.new("Highlight")
+    fruitEspHighlight.Name = "NTMT_BestFruit"
+    fruitEspHighlight.Adornee = fruit
+    fruitEspHighlight.FillColor = Color3.fromRGB(255, 60, 200)
+    fruitEspHighlight.OutlineColor = Color3.fromRGB(255, 255, 80)
+    fruitEspHighlight.FillTransparency = 0.35
+    fruitEspHighlight.OutlineTransparency = 0
+    fruitEspHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    fruitEspHighlight.Parent = fruitEspFolder
+    fruitEspBillboard = Instance.new("BillboardGui")
+    fruitEspBillboard.Name = "NTMT_ValueTag"
+    fruitEspBillboard.Adornee = part
+    fruitEspBillboard.Size = UDim2.fromOffset(120, 36)
+    fruitEspBillboard.StudsOffset = Vector3.new(0, 3, 0)
+    fruitEspBillboard.AlwaysOnTop = true
+    fruitEspBillboard.Parent = fruitEspFolder
+    local label = Instance.new("TextLabel")
+    label.Name = "ValueLabel"
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.fromScale(1, 1)
+    label.Font = Enum.Font.GothamBold
+    label.TextScaled = true
+    label.TextColor3 = Color3.fromRGB(255, 255, 120)
+    label.TextStrokeTransparency = 0.4
+    label.Text = tostring(math.floor(val or 0))
+    label.Parent = fruitEspBillboard
+end
+
+function getPetExpireRemaining(ref, model)
+    local now = Services.Workspace:GetServerTimeNow()
+    local despawn = nil
+    if ref then
+        despawn = ref:GetAttribute("DespawnTime") or ref:GetAttribute("ExpireTime") or ref:GetAttribute("DespawnAt")
+            or ref:GetAttribute("LifetimeEnd")
+    end
+    if type(despawn) ~= "number" and model then
+        despawn = model:GetAttribute("DespawnTime") or model:GetAttribute("ExpireTime") or model:GetAttribute("DespawnAt")
+    end
+    if type(despawn) == "number" then
+        return math.max(0, math.floor(despawn - now + 0.5))
+    end
+    return nil
+end
+
+function collectWildPetSpawnText()
+    initMapFolders()
+    local blocks = {}
+    if not WildPetSpawns then return "none" end
+    for _, model in WildPetSpawns:GetChildren() do
+        if not model:IsA("Model") then continue end
+        local ref = resolveRefFromModel(model)
+        local name = getPetDisplayName(model:GetAttribute("PetName"), model:GetAttribute("PetSize"))
+        local price = ref and ref:GetAttribute("Price") or "?"
+        local expire = getPetExpireRemaining(ref, model)
+        local expireStr = expire and formatMinutesSeconds(expire) or "?"
+        blocks[#blocks + 1] = string.format("%s\n%s\nexpire in %s", name, tostring(price), expireStr)
+    end
+    table.sort(blocks)
+    return #blocks > 0 and table.concat(blocks, "\n\n") or "none"
+end
+
+function buildPetShopWebhookEmbed()
+    return {
+        title = "NTMT HUB | Pet & Shop",
+        color = 0xFF4FD8,
+        fields = {
+            { name = "PET SPAWN", value = collectWildPetSpawnText(), inline = false },
+            { name = "SEED SHOP STOCK", value = buildSeedShopText(), inline = false },
+            { name = "GEAR SHOP STOCK", value = buildGearShopText(), inline = false },
+        },
+        footer = { text = "JobId: " .. tostring(game.JobId) },
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    }
+end
+
+function sendPetShopWebhook()
+    if webhookPetShopUrl == "" then return false end
+    return httpPost(webhookPetShopUrl, Services.HttpService:JSONEncode({
+        username = "NTMT HUB",
+        embeds = { buildPetShopWebhookEmbed() },
+    }))
+end
+
+function readShopRestockToken()
+    local tokens = {}
+    for _, folder in { SeedShopFolder, GearShopFolder, StockValuesRoot } do
+        if folder then
+            for _, key in { "RestockToken", "RestockId", "StockGeneration", "Generation", "RestockTime" } do
+                local val = folder:GetAttribute(key)
+                if val ~= nil then tokens[#tokens + 1] = key .. ":" .. tostring(val) end
+            end
+        end
+    end
+    table.sort(tokens)
+    return table.concat(tokens, "|")
+end
+
+function snapshotShopStock()
+    local snap = {}
+    for _, ch in StockItems:GetChildren() do
+        if ch:IsA("ValueBase") then snap["s:" .. ch.Name] = ch.Value end
+    end
+    for _, ch in GearStockItems:GetChildren() do
+        if ch:IsA("ValueBase") then snap["g:" .. ch.Name] = ch.Value end
+    end
+    return snap
+end
+
+function isLikelyShopRestock(oldSnap, newSnap)
+    if not oldSnap or not next(oldSnap) then return false end
+    local increased, appeared = 0, 0
+    for key, val in newSnap do
+        local prev = oldSnap[key] or 0
+        if val > prev then increased += 1 end
+        if prev <= 0 and val > 0 then appeared += 1 end
+    end
+    return increased >= 2 or appeared >= 2
+end
+
+function onShopRestockDetected()
+    if webhookPetShopUrl == "" then return end
+    if os.clock() - shopWebhookDebounce < 1.5 then return end
+    shopWebhookDebounce = os.clock()
+    sendPetShopWebhook()
+end
+
+function setupShopRestockWatch()
+    local function bindFolder(folder)
+        if not folder then return end
+        for _, key in { "RestockToken", "RestockId", "StockGeneration", "Generation", "RestockTime" } do
+            xpcall(function()
+                folder:GetAttributeChangedSignal(key):Connect(onShopRestockDetected)
+            end, noopErr)
+        end
+    end
+    bindFolder(SeedShopFolder)
+    bindFolder(GearShopFolder)
+    bindFolder(StockValuesRoot)
+    lastShopRestockToken = readShopRestockToken()
+    lastStockSnapshot = snapshotShopStock()
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            local token = readShopRestockToken()
+            if token ~= lastShopRestockToken and lastShopRestockToken ~= nil and token ~= "" then
+                lastShopRestockToken = token
+                onShopRestockDetected()
+            else
+                lastShopRestockToken = token
+            end
+            local snap = snapshotShopStock()
+            if isLikelyShopRestock(lastStockSnapshot, snap) then
+                onShopRestockDetected()
+            end
+            lastStockSnapshot = snap
+        end
+    end)
+end
+
+function getMutationSpawnPosition(spawn)
+    if not spawn or not spawn.Parent then return nil end
+    if spawn:IsA("BasePart") then return spawn.Position end
+    if spawn:IsA("Model") then return spawn:GetPivot().Position end
+    local part = spawn:FindFirstChildWhichIsA("BasePart", true)
+    return part and part.Position
+end
+
+function tryCollectMutationSeedsOnce()
+    if not genv.ftgs_AutoCollectMutation or collectingMutation or not SeedPackSpawns then return end
+    collectingMutation = true
+    task.spawn(function()
+        initMapFolders()
+        movementBypass = true
+        gardenActionLock = true
+        for _, spawn in SeedPackSpawns:GetChildren() do
+            if not genv.ftgs_AutoCollectMutation then break end
+            if spawn:GetAttribute("RainbowSeed") ~= true and spawn:GetAttribute("GoldSeed") ~= true and spawn:GetAttribute("MegaSeed") ~= true then continue end
+            local prompt = spawn:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if not prompt then continue end
+            local deadline = os.clock() + 2.0
+            while os.clock() < deadline and genv.ftgs_AutoCollectMutation do
+                local pos = getMutationSpawnPosition(spawn)
+                if pos then stickToPosition(pos) end
+                fireProximityPrompt(prompt)
+                task.wait(0.015)
+            end
+        end
+        local hum = getHumanoid()
+        if hum then hum.PlatformStand = false end
+        movementBypass = false
+        gardenActionLock = false
+        collectingMutation = false
+    end)
+end
+
 function sendWebhook()
-    if webhookUrl == "" then return end
-    httpPost(webhookUrl, Services.HttpService:JSONEncode({ username = "NTMT HUB", embeds = { buildWebhookEmbed() } }))
+    if webhookUrl == "" then return false end
+    return httpPost(webhookUrl, Services.HttpService:JSONEncode({ username = "NTMT HUB", embeds = { buildWebhookEmbed() } }))
 end
 
 function trySellAll()
@@ -2437,39 +2870,6 @@ function tryExpand()
     if getSheckles() < price then return end
     lastExpand = os.clock()
     safeNetCall(Net.Actions and Net.Actions.ExpandGarden)
-end
-
-function applyMovement()
-    local hum = getHumanoid()
-    if not hum then return end
-    hum.UseJumpPower = true
-    hum.WalkSpeed = desiredWalkSpeed
-    hum.JumpPower = desiredJumpPower
-end
-
-function tryCollectMutationSeedsOnce()
-    if not genv.ftgs_AutoCollectMutation or collectingMutation or not SeedPackSpawns then return end
-    collectingMutation = true
-    task.spawn(function()
-        initMapFolders()
-        for _, spawn in SeedPackSpawns:GetChildren() do
-            if not genv.ftgs_AutoCollectMutation then break end
-            if spawn:GetAttribute("RainbowSeed") ~= true and spawn:GetAttribute("GoldSeed") ~= true and spawn:GetAttribute("MegaSeed") ~= true then continue end
-            local prompt = spawn:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if not prompt then continue end
-            local pos = spawn:IsA("BasePart") and spawn.Position or (spawn:IsA("Model") and spawn:GetPivot().Position)
-            if not pos then continue end
-            movementBypass = true
-            instantTpOnce(pos)
-            local deadline = os.clock() + 2.0
-            while os.clock() < deadline and genv.ftgs_AutoCollectMutation do
-                fireProximityPrompt(prompt)
-                task.wait(0.018)
-            end
-        end
-        movementBypass = false
-        collectingMutation = false
-    end)
 end
 
 function findNearestDropPrompt()
@@ -2555,7 +2955,7 @@ Window = WindUI:CreateWindow({
     OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
 })
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.2", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.3", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
 
@@ -2625,7 +3025,7 @@ AutoTab:Toggle({ Title = "Auto Steal", Desc = "Fast steal 3 -> garden -> next (o
     if not s then cancelStealAction() end
 end })
 makeToggle(AutoTab, "Auto Collect Drops", "TP nearest drop + pickup", "ftgs_AutoCollectDrops")
-makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Instant TP + claim (2s)", "ftgs_AutoCollectMutation")
+makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Follow spawn + claim (2s, like pet)", "ftgs_AutoCollectMutation")
 makeToggle(AutoTab, "Auto Plant", "Remote plant — skip garden center", "ftgs_AutoPlant")
 multiDropdown(AutoTab, "Plant Seeds", PlantSeedNames, selectedPlantSeeds, false)
 makeToggle(AutoTab, "Auto Shovel", "Remove selected seed plants (batch)", "ftgs_AutoShovel")
@@ -2689,14 +3089,30 @@ SettingsTab:Input({ Title = "Notify every (minutes)", Value = tostring(webhookIn
     genv.ftgs_webhookIntervalMin = webhookIntervalMin
     saveConfig()
 end })
-SettingsTab:Button({ Title = "Test Webhook", Icon = "send", Callback = function() sendWebhook() end })
+SettingsTab:Button({ Title = "Test Webhook", Icon = "send", Callback = function()
+    if webhookUrl == "" then hubNotify("Webhook", "Paste Webhook URL first") return end
+    if sendWebhook() then hubNotify("Webhook", "Sent OK") else hubNotify("Webhook", "Send failed — check URL / executor") end
+end })
+SettingsTab:Section({ Title = "Webhook Pet & Shop" })
+SettingsTab:Input({ Title = "Webhook URL Pet & Shop", Value = webhookPetShopUrl, Placeholder = "optional discord webhook", Callback = function(v)
+    webhookPetShopUrl = v or ""
+    genv.ftgs_webhookPetShopUrl = webhookPetShopUrl
+    saveConfig()
+end })
+SettingsTab:Button({ Title = "Test Webhook Pet & Shop", Icon = "send", Callback = function()
+    if webhookPetShopUrl == "" then hubNotify("Pet & Shop", "Paste webhook URL first") return end
+    if sendPetShopWebhook() then hubNotify("Pet & Shop", "Sent OK") else hubNotify("Pet & Shop", "Send failed") end
+end })
 SettingsTab:Button({ Title = "Redeem TEAMGREENBEAN", Icon = "gift", Callback = function()
     safeNetCall(Net.Settings and Net.Settings.SubmitCode, "TEAMGREENBEAN")
 end })
 SettingsTab:Slider({ Title = "Walk Speed", Step = 1, Value = { Min = 16, Max = 250, Default = 16 }, Callback = function(v) desiredWalkSpeed = v applyMovement() end })
 SettingsTab:Slider({ Title = "Jump Power", Step = 1, Value = { Min = 50, Max = 500, Default = 50 }, Callback = function(v) desiredJumpPower = v applyMovement() end })
-makeToggle(SettingsTab, "Bypass Movement AC", "Stop rubber-band TP when high walkspeed", "ftgs_BypassMovement")
-makeToggle(SettingsTab, "Anti Hit", "No knockback from shovel (garden snap if bypass off)", "ftgs_AntiHit")
+makeToggle(SettingsTab, "Bypass Movement AC", "Client velocity + anti snap (high walkspeed)", "ftgs_BypassMovement")
+makeToggle(SettingsTab, "Anti Hit", "No shovel knockback when player nearby", "ftgs_AntiHit")
+SettingsTab:Section({ Title = "Visual" })
+SettingsTab:Toggle({ Title = "Fullbright", Desc = "Night looks like day", Default = genv.ftgs_Fullbright or false, Callback = function(s) setFullbright(s) end })
+SettingsTab:Toggle({ Title = "Fruit ESP", Desc = "Highlight highest value fruit on server", Default = genv.ftgs_FruitESP ~= false, Callback = function(s) genv.ftgs_FruitESP = s if not s then clearFruitEsp() end end })
 makeToggle(SettingsTab, "Anti Steal Guard", "Lock plot when intruder enters", "ftgs_AntiStealGuard")
 
 InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
@@ -2824,9 +3240,16 @@ task.spawn(function()
                 activePara:SetDesc(formatDuration(totalPlaySeconds + (os.time() - sessionStart)))
             end
         end, noopErr)
-        safeLoop(applyMovement)
-        task.wait(1)
+        task.wait(2)
     end
+end)
+
+Services.RunService.Heartbeat:Connect(function()
+    safeLoop(applyMovement)
+end)
+
+Services.RunService.RenderStepped:Connect(function(dt)
+    safeLoop(function() applyMovementBypass(dt) end)
 end)
 
 task.spawn(function()
@@ -2862,26 +3285,16 @@ end)
 
 task.spawn(function()
     while true do
+        safeLoop(tryAntiShovelKnockback)
         if genv.ftgs_AntiStealGuard and not gardenActionLock and not stealBusy then safeLoop(tryAntiStealGuard) end
-        if genv.ftgs_AntiHit and not genv.ftgs_BypassMovement and not movementBypass and not gardenActionLock and not isCatchingPet and not collectingMutation
-            and not plantingBusy and not sprinklerBusy and not shovelBusy and not stealBusy and not wateringBusy then
-            local hrp, cf = getRoot(), getPlotCenterCFrame()
-            if hrp and cf and not isInGardenActionRange() and (hrp.Position - cf.Position).Magnitude > 90 then
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                hrp.AssemblyAngularVelocity = Vector3.zero
-                hrp.CFrame = cf
-            end
-        elseif genv.ftgs_AntiHit and genv.ftgs_BypassMovement and not movementBypass and not gardenActionLock then
-            local hrp, hum = getRoot(), getHumanoid()
-            if hrp and hum and hum:GetState() == Enum.HumanoidStateType.Physics then
-                local vel = hrp.AssemblyLinearVelocity
-                if vel.Magnitude > 80 then
-                    hrp.AssemblyLinearVelocity = Vector3.zero
-                    hrp.AssemblyAngularVelocity = Vector3.zero
-                end
-            end
-        end
-        task.wait(0.08)
+        task.wait(0.05)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        safeLoop(updateFruitEsp)
+        task.wait(1.2)
     end
 end)
 
@@ -2937,8 +3350,14 @@ if LocalPlayer then
         local vu = Services.VirtualUser
         if vu and type(vu.CaptureController) == "function" then xpcall(function() vu:CaptureController() vu:ClickButton2(Vector2.new()) end, noopErr) end
     end)
-    LocalPlayer.CharacterAdded:Connect(function() task.wait(0.3) safeLoop(applyMovement) end)
+    LocalPlayer.CharacterAdded:Connect(function(char)
+        task.wait(0.3)
+        bindCharacterMovement(char)
+    end)
+    if LocalPlayer.Character then bindCharacterMovement(LocalPlayer.Character) end
 end
+
+setupShopRestockWatch()
 
 task.spawn(function()
     while true do
@@ -2949,7 +3368,7 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v6.0] Loaded | " .. Executor)
+print("[NTMT HUB v6.3] Loaded | " .. Executor)
 
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
