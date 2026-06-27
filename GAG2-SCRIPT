@@ -1,4 +1,4 @@
---[[ NTMT HUB - Grow a Garden 2 v5.7 | made by nguoitinhmuathu ]]
+--[[ NTMT HUB - Grow a Garden 2 v5.8 | made by nguoitinhmuathu ]]
 
 local DISCORD_LINK = "https://discord.gg/your-invite"
 local MADE_BY = "nguoitinhmuathu"
@@ -305,6 +305,7 @@ for _, info in ipairs(GearShopData.Data) do
     GearNames[#GearNames + 1] = info.ItemName
 end
 table.sort(GearNames)
+
 local PET_LIST = {
     "Monkey", "Bee", "BlackDragon", "GoldenDragonfly", "Unicorn", "Raccoon", "IceSerpent",
     "Robin", "Deer", "Dog", "Cat", "Bunny", "Chicken", "Pig", "Fox", "Owl", "Turtle",
@@ -326,16 +327,21 @@ local UI_THEMES = {
     Yellow = { accent = "#eab308", bg = "#1a160a", btn = "#3d3415", text = "#fffbe6", toggle = "#eab308" },
     Purple = { accent = "#a855f7", bg = "#140a1a", btn = "#2a153d", text = "#f3e6ff", toggle = "#a855f7" },
 }
-local COOLDOWN = { Harvest = 0.15, Plant = 0.35, Buy = 0.01, Expand = 8, Sell = 0.5, Shovel = 0.35, Gear = 0.5, Pet = 0.35 }
+local COOLDOWN = { Harvest = 0.15, Plant = 0.35, Buy = 0.01, Expand = 8, Sell = 0.5, Shovel = 0.35, Gear = 0.5, Pet = 0.35, Mail = 2 }
 local PLANT_MIN_DIST = 3
 local MUTATION_COLLECT_WAIT = 0.15
 local PET_FIND_SCAN_SEC = 5
 local FLY_STEP = 18
 local SEGMENT_PAUSE = 1
 local GARDEN_NEAR_DIST = 32
+local SPRINKLER_NEAR_DIST = 20
 local SPRINKLER_BUFF_RANGE = 9999
 local STEAL_BATCH = 3
+local STEAL_HOLD_TIMEOUT = 30
 local SHOVEL_BATCH = 10
+local MAIL_MAX_PER_GIFT = 20
+local MAIL_SEND_GAP = 1.5
+local MAIL_GEAR_CATEGORIES = { "Sprinklers", "WateringCans", "Mushrooms", "Gnomes", "Raccoons", "Crates", "SeedPacks", "Trowels", "Props", "Flashbangs", "EmptyPots", "Shovels" }
 local RARITY_RANK = { Secret = 1, Super = 2, Mythic = 3, Legendary = 4, Epic = 5, Rare = 6, Uncommon = 7, Common = 8 }
 local CONFIG_FILE = "ntmthub_gag2_config.json"
 
@@ -365,9 +371,12 @@ genv.ftgs_AutoFindPet = false
 genv.ftgs_AutoEquipBestPet = false
 genv.ftgs_AutoWebhook = false
 genv.ftgs_BuffSprinklerRange = false
+genv.ftgs_AutoSendMail = false
 
 local selectedBuySeeds, selectedBuyGears = {}, {}
 local selectedPlantSeeds, selectedShovelSeeds, selectedSprinklers, selectedPets = { Carrot = true }, { Carrot = true }, { ["Super Sprinkler"] = true }, { Unicorn = true }
+local mailUsername, mailSeedName, mailGearName = "", "Carrot", GearNames[1] or ""
+local mailSeedAmount, mailGearAmount = 1, 0
 local selectedFindPet = "Unicorn"
 local selectedUITheme = "Black"
 local desiredWalkSpeed, desiredJumpPower = 16, 50
@@ -383,7 +392,8 @@ local trackedPlants, myUserId = {}, LocalPlayer.UserId
 local WildPetFolder, WildPetSpawns, SeedPackSpawns = nil, nil, nil
 local isCatchingPet, petCatchCooldown = false, {}
 local collectingMutation, petFindBusy = false, false
-local lastPlant, lastExpand, lastShovel, lastGear, lastPet, lastSellTry = 0, 0, 0, 0, 0, 0
+local lastPlant, lastExpand, lastShovel, lastGear, lastPet, lastSellTry, lastMailTime = 0, 0, 0, 0, 0, 0, 0
+local isSendingMail = false
 local firedSet = {}
 local HARVEST_BATCH = 5
 
@@ -671,6 +681,76 @@ local function matchesAnySelectedPet(species, size)
     return false
 end
 
+local function findGearMailCategory(gearName)
+    local inv = PlayerReplica and PlayerReplica.Data and PlayerReplica.Data.Inventory
+    if type(inv) == "table" then
+        for _, cat in MAIL_GEAR_CATEGORIES do
+            local bucket = inv[cat]
+            if type(bucket) == "table" and bucket[gearName] then return cat end
+        end
+    end
+    if type(gearName) == "string" then
+        if gearName:find("Sprinkler") then return "Sprinklers" end
+        if gearName:find("Watering Can") then return "WateringCans" end
+        if gearName:find("Shovel") then return "Shovels" end
+        if gearName:find("Trowel") then return "Trowels" end
+    end
+    return "Sprinklers"
+end
+
+local function lookupMailUserId(username)
+    if type(username) ~= "string" or username == "" then return nil end
+    username = string.gsub(username, "^%s*@?(.-)%s*$", "%1")
+    if username == "" then return nil end
+    local ok, userId = xpcall(function() return Net.Mailbox and Net.Mailbox.LookupPlayer and Net.Mailbox.LookupPlayer:Fire(username) end, noopErr)
+    if ok and type(userId) == "number" and userId > 0 then return userId end
+    return nil
+end
+
+local function sendMailBatch(userId, batch, note)
+    if type(userId) ~= "number" or #batch == 0 then return false end
+    local ok, success = xpcall(function() return Net.Mailbox and Net.Mailbox.SendBatch and Net.Mailbox.SendBatch:Fire(userId, batch, note or "") end, noopErr)
+    return ok and success == true
+end
+
+local function tryAutoMail()
+    if not genv.ftgs_AutoSendMail or isSendingMail then return end
+    if mailUsername == "" then return end
+    if os.clock() - lastMailTime < COOLDOWN.Mail then return end
+    local batch = {}
+    if mailSeedName ~= "" and mailSeedAmount > 0 then
+        batch[#batch + 1] = { Category = "Seeds", ItemKey = mailSeedName, Count = math.clamp(math.floor(mailSeedAmount), 1, MAIL_MAX_PER_GIFT) }
+    end
+    if mailGearName ~= "" and mailGearAmount > 0 then
+        batch[#batch + 1] = { Category = findGearMailCategory(mailGearName), ItemKey = mailGearName, Count = math.clamp(math.floor(mailGearAmount), 1, MAIL_MAX_PER_GIFT) }
+    end
+    if #batch == 0 then return end
+    lastMailTime = os.clock()
+    isSendingMail = true
+    task.spawn(function()
+        local userId = lookupMailUserId(mailUsername)
+        if userId then sendMailBatch(userId, batch, "NTMT HUB") end
+        task.wait(MAIL_SEND_GAP)
+        isSendingMail = false
+    end)
+end
+
+local function flatDistXZ(a, b)
+    return (Vector3.new(a.X, 0, a.Z) - Vector3.new(b.X, 0, b.Z)).Magnitude
+end
+
+local function getPlayerFlatPos()
+    local hrp = getRoot()
+    return hrp and Vector3.new(hrp.Position.X, 0, hrp.Position.Z) or nil
+end
+
+local function isStealComplete(fruit, fruitCountBefore)
+    if not fruit or not fruit.Parent then return true end
+    if not getStealPrompt(fruit) then return true end
+    if getFruitCount() > fruitCountBefore then return true end
+    return false
+end
+
 local function getRarityRank(rarity) return RARITY_RANK[rarity] or 99 end
 local function getSeedRarity(seedName) local i = SeedDataByName[seedName] return i and i.Rarity or "Common" end
 local function getSeedPrice(name)
@@ -827,35 +907,47 @@ local function findPlantAreaPosition(nearPos)
     return bestPos
 end
 
-local function findBestSprinklerSpot()
+local function findBestSprinklerSpotNearPlayer()
     refreshOwnerPlot()
-    local bestPos, bestScore = nil, -math.huge
+    local playerFlat = getPlayerFlatPos()
+    if not playerFlat then return savedPlotCenter end
+
+    local candidates = {}
+    local function addCandidate(rawPos, seed)
+        if not rawPos or not seed then return end
+        local spot = findPlantAreaPosition(rawPos) or rawPos
+        local dist = flatDistXZ(spot, playerFlat)
+        if dist > SPRINKLER_NEAR_DIST then return end
+        local rank = getRarityRank(getSeedRarity(seed))
+        local valueScore = (9 - math.min(rank, 8)) * 1000 + getSeedPrice(seed)
+        candidates[#candidates + 1] = { pos = spot, score = valueScore - dist * 20, dist = dist }
+    end
+
     for _, pd in pairs(trackedPlants) do
         local seed = getPlantSeedName(pd)
-        if seed then
-            local rank = getRarityRank(getSeedRarity(seed))
-            local pos = extractPlantDataPosition(pd)
-            if pos and rank <= 4 then
-                local score = (5 - rank) * 1000 + getSeedPrice(seed)
-                if score > bestScore then bestScore, bestPos = score, findPlantAreaPosition(pos) or pos end
-            end
-        end
+        if seed then addCandidate(extractPlantDataPosition(pd), seed) end
     end
+
     local pf = OwnerPlot and OwnerPlot:FindFirstChild("Plants")
     if pf then
         for _, plant in pf:GetChildren() do
             local seed = plant:GetAttribute("SeedName") or plant:GetAttribute("PlantName")
             if seed then
-                local rank = getRarityRank(getSeedRarity(seed))
                 local part = plant.PrimaryPart or plant:FindFirstChildWhichIsA("BasePart", true)
-                if part and rank <= 4 then
-                    local score = (5 - rank) * 1000 + getSeedPrice(seed)
-                    if score > bestScore then bestScore, bestPos = score, findPlantAreaPosition(part.Position) or part.Position end
-                end
+                if part then addCandidate(part.Position, seed) end
             end
         end
     end
-    return bestPos or findEmptyGardenSpot() or savedPlotCenter
+
+    table.sort(candidates, function(a, b) return a.score > b.score end)
+    if candidates[1] then return candidates[1].pos end
+
+    local hrp = getRoot()
+    if hrp then
+        local y = savedPlotCenter and savedPlotCenter.Y or hrp.Position.Y
+        return Vector3.new(hrp.Position.X, y, hrp.Position.Z)
+    end
+    return savedPlotCenter
 end
 
 local function initMapFolders()
@@ -999,7 +1091,7 @@ local function trySprinkler()
     if not ensureNearGarden() then return end
     local plotId = LocalPlayer:GetAttribute("PlotId")
     if not plotId then return end
-    local placePos = findBestSprinklerSpot()
+    local placePos = findBestSprinklerSpotNearPlayer()
     if not placePos then return end
     local spPriority = buildPriorityList(selectedSprinklers, SPRINKLER_LIST)
     local spTool, spName = findGearTool("Sprinkler", spPriority)
@@ -1168,26 +1260,46 @@ local function stealFruit(fruit, ownerUserId)
     if not fruit or not fruit.Parent then return false end
     local hp = fruit:FindFirstChild("HarvestPart")
     if not hp then return false end
+    local stealPos = hp.Position
     local uid = ownerUserId or tonumber(fruit:GetAttribute("UserId"))
     local plantId = fruit:GetAttribute("PlantId")
     local fruitId = fruit:GetAttribute("FruitId") or ""
     if not uid or not plantId then return false end
-    tpInstant(hp.Position)
-    task.wait(0.45)
-    local prompt = getStealPrompt(fruit)
-    if prompt then
-        fireProximityPrompt(prompt)
-        task.wait(prompt:IsA("ProximityPrompt") and (prompt.HoldDuration + 0.1) or 0.2)
-    end
-    for _ = 1, 3 do
+
+    tpInstant(stealPos)
+    task.wait(0.25)
+
+    local fruitCountBefore = getFruitCount()
+    local deadline = os.clock() + STEAL_HOLD_TIMEOUT
+    local standCf = CFrame.new(stealPos + Vector3.new(0, 3, 0))
+
+    while os.clock() < deadline and not isStealComplete(fruit, fruitCountBefore) do
+        local hrp = getRoot()
+        local hum = getHumanoid()
+        if hrp then
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+            hrp.CFrame = standCf
+        end
+        if hum then hum.PlatformStand = true end
+
+        local prompt = getStealPrompt(fruit)
+        if prompt then fireProximityPrompt(prompt) end
         safeNetCall(Net.Steal and Net.Steal.BeginSteal, uid, plantId, fruitId)
-        task.wait(0.1)
+        task.wait(0.08)
         safeNetCall(Net.Steal and Net.Steal.CompleteSteal)
-        task.wait(0.15)
+        task.wait(0.12)
     end
-    StolenFruits[#StolenFruits + 1] = { name = fruit.Name .. " (" .. tostring(calculateStealValue(fruit)) .. ")", time = os.time() }
-    saveConfig()
-    return true
+
+    local hum = getHumanoid()
+    if hum then hum.PlatformStand = false end
+
+    if isStealComplete(fruit, fruitCountBefore) then
+        StolenFruits[#StolenFruits + 1] = { name = fruit.Name .. " (" .. tostring(calculateStealValue(fruit)) .. ")", time = os.time() }
+        saveConfig()
+        return true
+    end
+    return false
 end
 
 local function tryAutoSteal()
@@ -1203,22 +1315,15 @@ local function tryAutoSteal()
             stealBusy = false
             return
         end
-        tpInstant(getPlotCenterPos(plot))
-        task.wait(0.85)
-        if not plotUnlocked(owner) then
-            movementBypass = false
-            gardenActionLock = false
-            stealBusy = false
-            return
-        end
         local fruits = getStealableFruitsOnPlot(plot, STEAL_BATCH)
         for i = 1, math.min(STEAL_BATCH, #fruits) do
             if isInventoryFull() then break end
+            if not plotUnlocked(owner) then break end
             stealFruit(fruits[i], owner.UserId)
-            task.wait(0.25)
+            task.wait(0.15)
         end
         returnToGarden()
-        task.wait(1.5)
+        task.wait(1)
         movementBypass = false
         gardenActionLock = false
         stealBusy = false
@@ -1554,7 +1659,7 @@ local Window = WindUI:CreateWindow({
     OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
 })
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v5.7", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v5.8", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
 
@@ -1577,13 +1682,30 @@ MainTab:Section({ Title = "Farm" })
 makeToggle(MainTab, "Auto Harvest", "Collect ripe fruit only", "ftgs_AutoHarvest")
 makeToggle(MainTab, "Auto Sell", "Sell when bag full", "ftgs_AutoSell")
 makeToggle(MainTab, "Auto Expand Garden", "Auto expand plot", "ftgs_AutoExpand")
-makeToggle(MainTab, "Auto Sprinkler", "Stay near garden + place on best spot", "ftgs_AutoSprinkler")
+makeToggle(MainTab, "Auto Sprinkler", "Place near you on high-value nearby plants", "ftgs_AutoSprinkler")
 multiDropdown(MainTab, "Select Sprinklers", SPRINKLER_LIST, selectedSprinklers)
 MainTab:Section({ Title = "Sprinkler Buff" })
 makeToggle(MainTab, "Buff Range Sprinkler", "Full map sprinkler range", "ftgs_BuffSprinklerRange")
+MainTab:Section({ Title = "Auto Mail" })
+MainTab:Input({ Title = "Username", Value = mailUsername, Placeholder = "recipient username", Callback = function(v) mailUsername = v or "" end })
+makeToggle(MainTab, "Auto Send Mail", "Send seed/gear gifts", "ftgs_AutoSendMail")
+MainTab:Dropdown({ Title = "Mail Seed", Values = SeedNames, Value = mailSeedName, Callback = function(v)
+    if type(v) == "table" then v = v[1] end
+    mailSeedName = v or mailSeedName
+end })
+MainTab:Input({ Title = "Seed amount (max 20)", Value = tostring(mailSeedAmount), Callback = function(v)
+    mailSeedAmount = math.clamp(tonumber(v) or 1, 0, MAIL_MAX_PER_GIFT)
+end })
+MainTab:Dropdown({ Title = "Mail Gear", Values = GearNames, Value = mailGearName, Callback = function(v)
+    if type(v) == "table" then v = v[1] end
+    mailGearName = v or mailGearName
+end })
+MainTab:Input({ Title = "Gear amount (max 20)", Value = tostring(mailGearAmount), Callback = function(v)
+    mailGearAmount = math.clamp(tonumber(v) or 0, 0, MAIL_MAX_PER_GIFT)
+end })
 
 local AutoTab = Window:Tab({ Title = "Automation", Icon = "bot" })
-makeToggle(AutoTab, "Auto Steal", "TP garden -> steal 3 -> return home", "ftgs_AutoSteal")
+makeToggle(AutoTab, "Auto Steal", "TP fruit -> hold still until stolen", "ftgs_AutoSteal")
 makeToggle(AutoTab, "Auto Collect Drops", "Collect map drops", "ftgs_AutoCollectDrops")
 makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Fly + gold/rainbow/mega seeds", "ftgs_AutoCollectMutation")
 makeToggle(AutoTab, "Auto Plant", "Stay near garden + plant empty spots", "ftgs_AutoPlant")
@@ -1712,6 +1834,7 @@ task.spawn(function()
         if genv.ftgs_AutoSprinkler then safeLoop(trySprinkler) end
         if genv.ftgs_AutoExpand then safeLoop(tryExpand) end
         if genv.ftgs_AutoCollectDrops then safeLoop(tryCollectDrops) end
+        if genv.ftgs_AutoSendMail then safeLoop(tryAutoMail) end
         task.wait(0.35)
     end
 end)
@@ -1855,4 +1978,4 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v5.7] Loaded | " .. Executor)
+print("[NTMT HUB v5.8] Loaded | " .. Executor)
