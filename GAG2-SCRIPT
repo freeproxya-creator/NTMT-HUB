@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.5 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.5")
+--[[ NTMT HUB - Grow a Garden 2 v6.6 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.6")
 
 pcall(function()
     if delfile and isfile then
@@ -752,7 +752,7 @@ UI_THEMES = {
 COOLDOWN = { Harvest = 0.01, Plant = 0.35, Buy = 0.01, Expand = 8, Sell = 0.5, Shovel = 0.25, Gear = 0.5, Pet = 0.12, Mail = 2, Water = 0.35 }
 PLANT_MIN_DIST = 3
 PLANT_CENTER_AVOID = 9
-PET_DEFEND_RADIUS = 28
+PET_DEFEND_RADIUS = 55
 MUTATION_COLLECT_WAIT = 0.1
 SLOW_FLY_RATIO = 0.22
 PET_FIND_SCAN_SEC = 5
@@ -822,7 +822,17 @@ genv.ftgs_AutoWebhook = false
 genv.ftgs_AutoSendMail = false
 genv.ftgs_FixLag = false
 genv.ftgs_AutoExecute = false
-genv.ftgs_AutoTranslate = false
+genv.ftgs_FakeLag = false
+fakeLagDelay = 0.3
+fakeLagThread = nil
+selectedBgTheme = "None"
+IMAGE_THEME_PRESETS = {
+    Doraemon = "https://images.squarespace-cdn.com/content/v1/54fc8146e4b02a22841f4df7/1497832653543-F9EH524VOZ7ELRAFXIEV/Doraemon-12-1024x576.jpg",
+    Shinnosuke = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRY1cFulhxp0UsilMng44EVphM8KnBnc5QLX2-EKI5W4fXg2Gh82eB-aDMZ&s=10",
+    Spiderman = "https://upload.wikimedia.org/wikipedia/en/2/21/Web_of_Spider-Man_Vol_1_129-1.png",
+    Lunar = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ_XFb-BVr-BxmLjCKhWnENAoX_ZFWZ_DapI29dA7tEdL0uaZ6AS8g4l0AH&s=10",
+    Spongebob = "https://spinnaker-watches.com/cdn/shop/articles/15d488f366cfe064f6b3bcc3c93de85e_69f4aa5d-8762-4bf0-86cc-d0ff9fa7bc19_345x300_crop_center.png?v=1758009079",
+}
 
 NTMT_EXEC_PATHS = {
     "ntmthub/roblox_windui_model_script.lua",
@@ -865,6 +875,7 @@ lastClientMovePos = nil
 hitboxOriginalProps, defendHitboxActive = {}, false
 translateLanguage = "English"
 translationRegistry, translationCache = {}, {}
+hubScreenGuis = {}
 fpsBoosterConn, fpsBoosterRestore = nil, nil
 autoExecuteQueued = false
 
@@ -905,8 +916,10 @@ function saveConfig()
             totalPlaySeconds = totalPlaySeconds + (os.time() - sessionStart),
             autoExecute = genv.ftgs_AutoExecute == true,
             fixLag = genv.ftgs_FixLag == true,
-            autoTranslate = genv.ftgs_AutoTranslate == true,
+            fakeLag = genv.ftgs_FakeLag == true,
+            fakeLagDelay = fakeLagDelay,
             translateLanguage = translateLanguage,
+            selectedBgTheme = selectedBgTheme,
             scriptUrl = genv.NTMT_SCRIPT_URL or "",
         }))
     end, noopErr)
@@ -937,8 +950,10 @@ function loadConfig()
     if type(data.StolenFruits) == "table" then StolenFruits = data.StolenFruits end
     if data.autoExecute ~= nil then genv.ftgs_AutoExecute = data.autoExecute == true end
     if data.fixLag ~= nil then genv.ftgs_FixLag = data.fixLag == true end
-    if data.autoTranslate ~= nil then genv.ftgs_AutoTranslate = data.autoTranslate == true end
+    if data.fakeLag ~= nil then genv.ftgs_FakeLag = data.fakeLag == true end
+    fakeLagDelay = tonumber(data.fakeLagDelay) or fakeLagDelay
     if type(data.translateLanguage) == "string" then translateLanguage = data.translateLanguage end
+    if type(data.selectedBgTheme) == "string" then selectedBgTheme = data.selectedBgTheme end
     if type(data.scriptUrl) == "string" and data.scriptUrl ~= "" then genv.NTMT_SCRIPT_URL = data.scriptUrl end
     totalPlaySeconds = tonumber(data.totalPlaySeconds) or totalPlaySeconds
     sessionStart = os.time()
@@ -1289,6 +1304,41 @@ function stickToPosition(pos)
     if hum and (isCatchingPet or collectingMutation) then hum.PlatformStand = true end
 end
 
+function findShovelTool()
+    local function scan(c)
+        if not c then return end
+        for _, item in c:GetChildren() do
+            if item:IsA("Tool") and item:GetAttribute("Shovel") then
+                return item, item:GetAttribute("Shovel")
+            end
+        end
+    end
+    return scan(LocalPlayer.Character) or scan(LocalPlayer:FindFirstChild("Backpack"))
+end
+
+function getNearestDefendPetPosition()
+    initMapFolders()
+    if not WildPetSpawns then return nil end
+    local myHrp = getRoot()
+    local myPos = myHrp and myHrp.Position
+    local bestPos, bestScore = nil, math.huge
+    for _, model in WildPetSpawns:GetChildren() do
+        if not model:IsA("Model") then continue end
+        local ref = resolveRefFromModel(model)
+        if not ref then continue end
+        local pos = getWildPetPosition({ model = model, ref = ref, root = model.PrimaryPart })
+        if not pos then continue end
+        local score = myPos and (myPos - pos).Magnitude or 0
+        local ownerId = ref:GetAttribute("OwnerUserId")
+        if ownerId == LocalPlayer.UserId then score -= 100000 end
+        if score < bestScore then
+            bestScore = score
+            bestPos = pos
+        end
+    end
+    return bestPos
+end
+
 function getWildPetPosition(pick)
     if not pick then return nil end
     if pick.model and pick.model.Parent then
@@ -1376,7 +1426,7 @@ function restoreAllHitboxes()
 end
 
 function updateDefendHitboxes(petPos)
-    if not genv.ftgs_AutoDefendPet or not isCatchingPet or not petPos then
+    if not genv.ftgs_AutoDefendPet or not petPos then
         if defendHitboxActive then restoreAllHitboxes() end
         return
     end
@@ -1384,7 +1434,7 @@ function updateDefendHitboxes(petPos)
     for _, plr in Services.Players:GetPlayers() do
         if plr ~= LocalPlayer and plr.Character then
             local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-            if hrp and (hrp.Position - petPos).Magnitude <= PET_DEFEND_RADIUS + 15 then
+            if hrp and (hrp.Position - petPos).Magnitude <= PET_DEFEND_RADIUS + 20 then
                 extendPlayerHitbox(plr)
             else
                 restorePlayerHitbox(plr)
@@ -1395,7 +1445,7 @@ end
 
 function shovelClickAttack(shovel)
     if not shovel then return end
-    for _ = 1, 12 do
+    for _ = 1, 16 do
         if type(shovel.Activate) == "function" then
             xpcall(function() shovel:Activate() end, noopErr)
         end
@@ -1403,39 +1453,45 @@ function shovelClickAttack(shovel)
         if vu and type(vu.ClickButton1) == "function" then
             xpcall(function() vu:ClickButton1(Vector2.new(420, 320)) end, noopErr)
         end
-        task.wait(0.02)
+        task.wait(0.015)
     end
 end
 
 function hitPlayerWithShovel(targetPlr, shovelTool)
     if not targetPlr or not targetPlr.Character then return end
     extendPlayerHitbox(targetPlr)
-    local shovel = shovelTool or select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
+    local shovel, shovelName
+    if shovelTool then
+        shovel = shovelTool
+        shovelName = shovelTool:GetAttribute("Shovel")
+    else
+        shovel, shovelName = findShovelTool()
+    end
     if not shovel then return end
     equipTool(shovel)
-    shovel = select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" })) or shovel
+    shovel, shovelName = findShovelTool() or findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" })
+    shovelName = shovelName or (shovel and shovel:GetAttribute("Shovel")) or shovel.Name
     local thrp = targetPlr.Character:FindFirstChild("HumanoidRootPart")
-    local hrp = getRoot()
-    if thrp and hrp then
-        local offset = (hrp.Position - thrp.Position).Magnitude > 1 and (hrp.Position - thrp.Position).Unit * 3.5 or Vector3.new(0, 0, 3.5)
-        hrp.CFrame = CFrame.new(thrp.Position + offset + Vector3.new(0, 2, 0))
-        hrp.AssemblyLinearVelocity = Vector3.zero
+    if thrp then
+        tpInstant(thrp.Position + (thrp.CFrame.LookVector * -4))
+        task.wait(0.03)
     end
     shovelClickAttack(shovel)
-    safeNetCall(Net.Shovel and Net.Shovel.HitPlayer, targetPlr.UserId, shovel.Name, shovel)
+    safeNetCall(Net.Shovel and Net.Shovel.HitPlayer, targetPlr.UserId, shovelName, shovel)
 end
 
-function tryDefendPetAt(pos)
-    if not genv.ftgs_AutoDefendPet or not pos then return false end
-    local intruders = getPlayersNearPosition(pos, PET_DEFEND_RADIUS)
-    local shovel = select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
-    if shovel and #intruders > 0 then equipTool(shovel) end
-    updateDefendHitboxes(pos)
+function attackNearbyIntruders(petPos)
+    if not genv.ftgs_AutoDefendPet or not petPos then return false end
+    local intruders = getPlayersNearPosition(petPos, PET_DEFEND_RADIUS)
     if #intruders == 0 then return false end
+    local shovel = select(1, findShovelTool()) or select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
+    if not shovel then return false end
+    equipTool(shovel)
+    updateDefendHitboxes(petPos)
     for _, target in intruders do
         hitPlayerWithShovel(target, shovel)
     end
-    stickToPosition(pos)
+    if isCatchingPet or collectingMutation then stickToPosition(petPos) end
     return true
 end
 
@@ -2502,21 +2558,15 @@ function tryBuyPet()
         if tr and tr.OnClientEvent then
             conn = tr.OnClientEvent:Connect(function(_, uid) if uid == LocalPlayer.UserId then done = true end end)
         end
-        local deadline = os.clock() + 2.0
+        local deadline = os.clock() + 3.5
         while not done and os.clock() < deadline and genv.ftgs_AutoBuyPet do
             local pos = getWildPetPosition(pick)
             if pos then
                 stickToPosition(pos)
-                if genv.ftgs_AutoDefendPet then
-                    local intruders = getPlayersNearPosition(pos, PET_DEFEND_RADIUS)
-                    local shovel = select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
-                    if shovel and #intruders > 0 then equipTool(shovel) end
-                    updateDefendHitboxes(pos)
-                    if #intruders > 0 then tryDefendPetAt(pos) end
-                end
+                if genv.ftgs_AutoDefendPet then attackNearbyIntruders(pos) end
             end
             doTame()
-            task.wait(0.015)
+            task.wait(0.012)
         end
         restoreAllHitboxes()
         if conn then conn:Disconnect() end
@@ -2770,14 +2820,54 @@ function translateUiText(text, langCode)
     return text
 end
 
-function rescanUiTextRegistry()
+function isHubUiInstance(inst)
+    if not inst then return false end
+    local p = inst
+    while p do
+        if p:IsA("ScreenGui") and (p:GetAttribute("NTMTHubUI") == true or hubScreenGuis[p]) then
+            return true
+        end
+        p = p.Parent
+    end
+    return false
+end
+
+function markHubScreenGuis()
     local roots = {}
     pcall(function() roots[#roots + 1] = LocalPlayer.PlayerGui end)
     pcall(function() roots[#roots + 1] = game:GetService("CoreGui") end)
     for _, root in roots do
-        for _, d in root:GetDescendants() do
-            if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
-                if not translationRegistry[d] then registerUiTextInstance(d) end
+        for _, sg in root:GetChildren() do
+            if sg:IsA("ScreenGui") then
+                local isHub = sg:GetAttribute("NTMTHubUI") == true
+                if not isHub and type(sg.Name) == "string" and sg.Name:lower():find("ntmt", 1, true) then
+                    isHub = true
+                end
+                if not isHub then
+                    for _, d in sg:GetDescendants() do
+                        if (d:IsA("TextButton") or d:IsA("TextLabel")) and type(d.Text) == "string" and d.Text:find("NTMT HUB", 1, true) then
+                            isHub = true
+                            break
+                        end
+                    end
+                end
+                if isHub then
+                    sg:SetAttribute("NTMTHubUI", true)
+                    hubScreenGuis[sg] = true
+                end
+            end
+        end
+    end
+end
+
+function rescanHubUiTextRegistry()
+    markHubScreenGuis()
+    for sg in hubScreenGuis do
+        if sg.Parent then
+            for _, d in sg:GetDescendants() do
+                if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+                    if not translationRegistry[d] then registerUiTextInstance(d) end
+                end
             end
         end
     end
@@ -2785,41 +2875,43 @@ end
 
 function registerUiTextInstance(inst)
     if not inst or (not inst:IsA("TextLabel") and not inst:IsA("TextButton") and not inst:IsA("TextBox")) then return end
+    if not isHubUiInstance(inst) then return end
     if translationRegistry[inst] then return end
     local data = { original = inst.Text or "", translating = false }
     translationRegistry[inst] = data
     inst:GetPropertyChangedSignal("Text"):Connect(function()
         if data.translating then return end
-        if inst.Text ~= data.original and not genv.ftgs_AutoTranslate then
-            data.original = inst.Text
-        elseif genv.ftgs_AutoTranslate and inst.Text == data.original then
-            return
-        elseif not genv.ftgs_AutoTranslate then
+        local code = TRANSLATE_LANG_CODES[translateLanguage] or "en"
+        if code == "en" then
             data.original = inst.Text
         end
     end)
 end
 
-function fastTranslateAllUi()
+function applyUiLanguage(langName)
+    if langName then translateLanguage = langName end
+    saveConfig()
     if translateBusy then return end
-    if not genv.ftgs_AutoTranslate then
-        for inst, data in translationRegistry do
-            if inst and inst.Parent then
-                data.translating = true
-                inst.Text = data.original
-                data.translating = false
-            end
-        end
-        return
-    end
     translateBusy = true
     task.spawn(function()
-        rescanUiTextRegistry()
-        local code = TRANSLATE_LANG_CODES[translateLanguage] or "vi"
-        if code == "en" then translateBusy = false return end
+        rescanHubUiTextRegistry()
+        local code = TRANSLATE_LANG_CODES[translateLanguage] or "en"
+        if code == "en" then
+            for inst, data in translationRegistry do
+                if inst and inst.Parent and isHubUiInstance(inst) then
+                    data.translating = true
+                    inst.Text = data.original
+                    data.translating = false
+                end
+            end
+            translateBusy = false
+            hubNotify("Translate", "English restored")
+            return
+        end
+        table.clear(translationCache)
         local unique, map = {}, {}
         for inst, data in translationRegistry do
-            if inst and inst.Parent and data.original and data.original ~= "" then
+            if inst and inst.Parent and isHubUiInstance(inst) and data.original and data.original ~= "" then
                 if not map[data.original] then
                     map[data.original] = {}
                     unique[#unique + 1] = data.original
@@ -2829,21 +2921,14 @@ function fastTranslateAllUi()
         end
         local translated, doneCount = {}, 0
         local total = #unique
-        local batchSize = 20
-        for i = 1, total, batchSize do
-            local batchEnd = math.min(i + batchSize - 1, total)
-            for j = i, batchEnd do
-                local text = unique[j]
-                task.spawn(function()
-                    translated[text] = translateUiText(text, code)
-                    doneCount += 1
-                end)
-            end
-            local deadline = os.clock() + 0.35
-            while doneCount < batchEnd and os.clock() < deadline do task.wait(0.02) end
+        for _, text in unique do
+            task.spawn(function()
+                translated[text] = translateUiText(text, code)
+                doneCount += 1
+            end)
         end
         local waitDeadline = os.clock() + 3
-        while doneCount < total and os.clock() < waitDeadline do task.wait(0.03) end
+        while doneCount < total and os.clock() < waitDeadline do task.wait(0.02) end
         for text, insts in map do
             local out = translated[text] or text
             for _, inst in insts do
@@ -2856,22 +2941,96 @@ function fastTranslateAllUi()
             end
         end
         translateBusy = false
-        hubNotify("Translate", "UI → " .. translateLanguage)
+        hubNotify("Translate", "NTMT UI → " .. translateLanguage)
     end)
 end
 
-function refreshAllUiTranslations()
-    fastTranslateAllUi()
+function setupHubUiTranslationWatcher()
+    markHubScreenGuis()
+    local function watchSg(sg)
+        if not sg or not sg:IsA("ScreenGui") then return end
+        if sg:GetAttribute("NTMTHubUI") ~= true and not hubScreenGuis[sg] then return end
+        hubScreenGuis[sg] = true
+        for _, d in sg:GetDescendants() do registerUiTextInstance(d) end
+        sg.DescendantAdded:Connect(function(d)
+            task.defer(function()
+                if isHubUiInstance(d) then registerUiTextInstance(d) end
+            end)
+        end)
+    end
+    for _, sg in LocalPlayer:WaitForChild("PlayerGui"):GetChildren() do watchSg(sg) end
+    LocalPlayer.PlayerGui.ChildAdded:Connect(function(ch) task.defer(function() watchSg(ch) end) end)
 end
 
-function setupUiTranslationWatcher()
-    local function scan(root)
-        if not root then return end
-        for _, d in root:GetDescendants() do registerUiTextInstance(d) end
-        root.DescendantAdded:Connect(function(d) task.defer(function() registerUiTextInstance(d) end) end)
+function findHubBackgroundHost()
+    local bestFrame, bestArea = nil, 0
+    for sg in hubScreenGuis do
+        if sg.Parent then
+            for _, d in sg:GetDescendants() do
+                if d:IsA("Frame") and d.Visible then
+                    local area = d.AbsoluteSize.X * d.AbsoluteSize.Y
+                    if area > bestArea then
+                        bestArea = area
+                        bestFrame = d
+                    end
+                end
+            end
+        end
     end
-    scan(LocalPlayer:WaitForChild("PlayerGui"))
-    xpcall(function() scan(game:GetService("CoreGui")) end, noopErr)
+    return bestFrame
+end
+
+function applyHubBackgroundImage(themeName)
+    selectedBgTheme = themeName or selectedBgTheme or "None"
+    saveConfig()
+    task.spawn(function()
+        for _ = 1, 8 do
+            markHubScreenGuis()
+            local host = findHubBackgroundHost()
+            if host then
+                local existing = host:FindFirstChild("NTMT_BG")
+                local url = IMAGE_THEME_PRESETS[selectedBgTheme]
+                if not url or selectedBgTheme == "None" then
+                    if existing then existing:Destroy() end
+                    return
+                end
+                local bg = existing
+                if not bg then
+                    bg = Instance.new("ImageLabel")
+                    bg.Name = "NTMT_BG"
+                    bg.Size = UDim2.fromScale(1, 1)
+                    bg.Position = UDim2.fromScale(0, 0)
+                    bg.BackgroundTransparency = 1
+                    bg.BorderSizePixel = 0
+                    bg.ScaleType = Enum.ScaleType.Crop
+                    bg.ZIndex = 0
+                    bg.Parent = host
+                end
+                bg.Image = url
+                return
+            end
+            task.wait(0.25)
+        end
+    end)
+end
+
+function setFakeLag(on, delay)
+    genv.ftgs_FakeLag = on == true
+    if delay ~= nil then fakeLagDelay = math.max(0.05, tonumber(delay) or fakeLagDelay or 0.3) end
+    saveConfig()
+    if not genv.ftgs_FakeLag then return end
+    task.spawn(function()
+        while genv.ftgs_FakeLag do
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.Anchored = true
+                task.wait(fakeLagDelay)
+                if hrp.Parent then hrp.Anchored = false end
+            end
+            task.wait(0.05)
+        end
+    end)
 end
 
 function cacheScriptSourceForAutoExec()
@@ -3565,9 +3724,14 @@ Window = WindUI:CreateWindow({
     OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
 })
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.5", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.6", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
+task.defer(function()
+    markHubScreenGuis()
+    if selectedBgTheme and selectedBgTheme ~= "None" then applyHubBackgroundImage(selectedBgTheme) end
+    if translateLanguage and translateLanguage ~= "English" then applyUiLanguage(translateLanguage) end
+end)
 
 function makeToggle(tab, title, desc, key)
     tab:Toggle({ Title = title, Desc = desc, Default = genv[key] or false, Callback = function(s) genv[key] = s end })
@@ -3738,18 +3902,25 @@ SettingsTab:Toggle({ Title = "Auto Execute", Desc = "Re-run script after rejoin/
     saveConfig()
     cacheScriptSourceForAutoExec()
 end })
-SettingsTab:Section({ Title = "Auto Translate" })
-SettingsTab:Toggle({ Title = "Auto Translate UI", Desc = "Translate all UI in ~2-3s", Default = genv.ftgs_AutoTranslate or false, Callback = function(s)
-    genv.ftgs_AutoTranslate = s
-    saveConfig()
-    fastTranslateAllUi()
-end })
-SettingsTab:Dropdown({ Title = "Language", Values = TRANSLATE_LANG_NAMES, Value = translateLanguage, Callback = function(v)
+SettingsTab:Section({ Title = "UI Language (1 click)" })
+SettingsTab:Dropdown({ Title = "Language", Desc = "Instant translate NTMT Hub UI only", Values = TRANSLATE_LANG_NAMES, Value = translateLanguage, Callback = function(v)
     if type(v) == "table" then v = v[1] end
-    translateLanguage = v or translateLanguage
-    table.clear(translationCache)
+    applyUiLanguage(v or translateLanguage)
+end })
+SettingsTab:Section({ Title = "UI Background (1 click)" })
+for themeName in { "Doraemon", "Shinnosuke", "Spiderman", "Lunar", "Spongebob", "None" } do
+    SettingsTab:Button({ Title = "Theme: " .. themeName, Icon = "image", Callback = function()
+        applyHubBackgroundImage(themeName)
+        hubNotify("Theme", themeName)
+    end })
+end
+SettingsTab:Section({ Title = "Fake Lag" })
+SettingsTab:Input({ Title = "Fake Lag delay (sec)", Value = tostring(fakeLagDelay), Placeholder = "0.3 = hyper, 2 = slowmo", Callback = function(v)
+    fakeLagDelay = math.max(0.05, tonumber(v) or fakeLagDelay)
     saveConfig()
-    fastTranslateAllUi()
+end })
+SettingsTab:Toggle({ Title = "Fake Lag", Desc = "Anchor HRP on/off loop", Default = genv.ftgs_FakeLag or false, Callback = function(s)
+    setFakeLag(s, fakeLagDelay)
 end })
 makeToggle(SettingsTab, "Anti Steal Guard", "Lock plot when intruder enters", "ftgs_AntiStealGuard")
 
@@ -4011,18 +4182,32 @@ setupShopRestockWatch()
 cacheScriptSourceForAutoExec()
 setupAutoExecute()
 if genv.ftgs_FixLag then startFixLag() end
+if genv.ftgs_FakeLag then setFakeLag(true, fakeLagDelay) end
 task.defer(function()
-    xpcall(setupUiTranslationWatcher, noopErr)
-    task.wait(1.5)
-    if genv.ftgs_AutoTranslate then fastTranslateAllUi() end
+    xpcall(setupHubUiTranslationWatcher, noopErr)
 end)
 
 task.spawn(function()
     while true do
-        if genv.ftgs_AutoTranslate and not translateBusy then
-            rescanUiTextRegistry()
+        if genv.ftgs_AutoDefendPet then
+            safeLoop(function()
+                local pos = getNearestDefendPetPosition()
+                if pos then
+                    local intruders = getPlayersNearPosition(pos, PET_DEFEND_RADIUS)
+                    if #intruders > 0 then
+                        movementBypass = true
+                        attackNearbyIntruders(pos)
+                    else
+                        updateDefendHitboxes(pos)
+                    end
+                elseif defendHitboxActive then
+                    restoreAllHitboxes()
+                end
+            end)
+        elseif defendHitboxActive then
+            restoreAllHitboxes()
         end
-        task.wait(4)
+        task.wait(0.08)
     end
 end)
 
@@ -4035,7 +4220,7 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v6.5] Loaded | " .. Executor)
+print("[NTMT HUB v6.6] Loaded | " .. Executor)
 
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
