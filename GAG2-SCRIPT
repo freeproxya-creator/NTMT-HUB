@@ -743,9 +743,14 @@ sprinkledSpots = {}
 sprinkledPlantKeys = {}
 lastWater = 0
 selectedWaterPlants = { Carrot = true }
+exceptHarvestPlants = {}
+collectOnlyPlants = {}
+harvestMaxWeight = 0
+stealSessionId = 0
 
 genv.ftgs_AutoHarvest = false
 genv.ftgs_AutoSell = false
+genv.ftgs_AutoSellEverytime = false
 genv.ftgs_AutoSteal = false
 genv.ftgs_AutoPlant = false
 genv.ftgs_AutoBuySeed = false
@@ -1032,6 +1037,51 @@ function holdGardenStill(duration)
     local hum = getHumanoid()
     if hum then hum.PlatformStand = false end
     gardenActionLock = false
+end
+
+function cancelStealAction()
+    stealSessionId += 1
+    stealBusy = false
+    movementBypass = false
+    gardenActionLock = false
+    local hum = getHumanoid()
+    if hum then hum.PlatformStand = false end
+end
+
+function instantTpOnce(pos)
+    if not pos then return end
+    tpInstant(pos)
+    task.wait(0.012)
+end
+
+function getFruitWeightKg(fruitData)
+    if type(fruitData) ~= "table" then return nil end
+    local w = fruitData.Weight or fruitData.FruitWeight or fruitData.WeightKg or fruitData.weight
+    if type(w) == "number" then return w end
+    if type(fruitData.SizeMulti) == "number" then return fruitData.SizeMulti end
+    if type(fruitData.Size) == "number" then return fruitData.Size end
+    return nil
+end
+
+function getHarvestPlantName(plantData, fruitData)
+    return getPlantSeedName(plantData) or getPlantSeedName(fruitData)
+        or (type(fruitData) == "table" and (fruitData.PlantName or fruitData.CorePartName or fruitData.FruitName))
+        or (type(plantData) == "table" and (plantData.PlantName or plantData.SeedName))
+end
+
+function shouldHarvestTarget(plantData, fruitData)
+    local seedName = getHarvestPlantName(plantData, fruitData)
+    if setHasAny(exceptHarvestPlants) and seedName and seedInSet(exceptHarvestPlants, seedName) then
+        return false
+    end
+    if setHasAny(collectOnlyPlants) and (not seedName or not seedInSet(collectOnlyPlants, seedName)) then
+        return false
+    end
+    if harvestMaxWeight > 0 and fruitData then
+        local w = getFruitWeightKg(fruitData)
+        if w and w > harvestMaxWeight then return false end
+    end
+    return true
 end
 
 function parseMultiSelect(sel, into)
@@ -1526,7 +1576,7 @@ function tryHarvestOne()
         local fruits = plantData.Fruits
         if type(fruits) == "table" then
             for fruitId, fruitData in pairs(fruits) do
-                if isDataReady(fruitData) then
+                if isDataReady(fruitData) and shouldHarvestTarget(plantData, fruitData) then
                     local key = tostring(plantId) .. "|" .. tostring(fruitId)
                     if not firedSet[key] and n < HARVEST_BATCH then
                         safeNetCall(Net.Garden and Net.Garden.CollectFruit, plantId, fruitId)
@@ -1536,7 +1586,7 @@ function tryHarvestOne()
                 end
             end
         end
-        if isDataReady(plantData) then
+        if isDataReady(plantData) and shouldHarvestTarget(plantData, nil) then
             local key = tostring(plantId) .. "|_plant"
             if not firedSet[key] and n < HARVEST_BATCH then
                 safeNetCall(Net.Garden and Net.Garden.CollectFruit, plantId, "")
@@ -1595,7 +1645,8 @@ end
 function tryAutoPlant()
     if not genv.ftgs_AutoPlant or plantingBusy or not setHasAny(selectedPlantSeeds) then return end
     if os.clock() - lastPlant < COOLDOWN.Plant then return end
-    if not isInGardenActionRange() then return end
+    refreshOwnerPlot()
+    if not OwnerPlot then return end
     local seedName, tool = pickNextPlantSeed()
     if not tool then return end
     local pos = findNearestEmptySpotOnPlot()
@@ -1603,17 +1654,11 @@ function tryAutoPlant()
     lastPlant = os.clock()
     plantingBusy = true
     task.spawn(function()
-        movementBypass = true
-        gardenActionLock = true
-        briefTpForAction(pos)
-        task.wait(0.03)
         equipTool(tool)
         tool = findSeedToolByName(seedName) or tool
         safeNetCall(Net.Plant and Net.Plant.PlantSeed, pos, seedName, tool)
         if tool and type(tool.Activate) == "function" then xpcall(function() tool:Activate() end, noopErr) end
         task.wait(0.04)
-        movementBypass = false
-        gardenActionLock = false
         plantingBusy = false
     end)
 end
@@ -1888,7 +1933,8 @@ function fireProximityPrompt(prompt)
     end, noopErr)
 end
 
-function stealFruit(fruit, ownerUserId)
+function stealFruit(fruit, ownerUserId, sessionId)
+    if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then return false end
     if not fruit or not fruit.Parent then return false end
     local stealPos, uid, plantId, fruitId = resolveStealTarget(fruit, ownerUserId)
     if not stealPos or not plantId then return false end
@@ -1903,6 +1949,7 @@ function stealFruit(fruit, ownerUserId)
     local deadline = os.clock() + STEAL_HOLD_TIMEOUT
 
     while os.clock() < deadline do
+        if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then break end
         if isStealComplete(fruit, fruitCountBefore) then break end
         if not fruit.Parent then break end
         briefTpForAction(stealPos)
@@ -1916,6 +1963,8 @@ function stealFruit(fruit, ownerUserId)
     movementBypass = false
     gardenActionLock = false
 
+    if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then return false end
+
     if isStealComplete(fruit, fruitCountBefore) then
         StolenFruits[#StolenFruits + 1] = { name = fruit.Name .. " (" .. tostring(calculateStealValue(fruit)) .. ")", time = os.time() }
         saveConfig()
@@ -1927,27 +1976,31 @@ end
 function tryAutoSteal()
     if not genv.ftgs_AutoSteal or stealBusy or isInventoryFull() then return end
     stealBusy = true
+    local sessionId = stealSessionId
     task.spawn(function()
         safeNetCall(Net.Garden and Net.Garden.RequestGardens)
-        task.wait(0.04)
+        task.wait(0.03)
         movementBypass = true
         local targets = collectAllStealTargets()
         local stolen = 0
         for _, t in ipairs(targets) do
+            if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then break end
             if stolen >= STEAL_BATCH or isInventoryFull() then break end
             if t.owner and not plotUnlocked(t.owner) then continue end
             local uid = t.ownerUserId
             if t.owner then uid = t.owner.UserId end
-            if stealFruit(t.fruit, uid) then stolen += 1 end
+            if stealFruit(t.fruit, uid, sessionId) then stolen += 1 end
             if stolen >= STEAL_BATCH then break end
-            task.wait(0.04)
+            task.wait(0.03)
         end
-        if stolen > 0 then
+        if stolen > 0 and genv.ftgs_AutoSteal and sessionId == stealSessionId then
             returnToGarden()
-            task.wait(0.1)
+            task.wait(0.08)
         end
-        movementBypass = false
-        stealBusy = false
+        if sessionId == stealSessionId then
+            movementBypass = false
+            stealBusy = false
+        end
     end)
 end
 
@@ -2008,19 +2061,17 @@ function tryBuyPet()
             if tameRemote then safeNetCall(tameRemote, pick.ref) end
         end
         movementBypass = true
-        if tpPos then briefTpForAction(tpPos) end
-        task.wait(0.015)
+        if tpPos then instantTpOnce(tpPos) end
         doTame()
         local done, conn = false, nil
         local tr = Net.Pets and Net.Pets.WildPetTameResult
         if tr and tr.OnClientEvent then
             conn = tr.OnClientEvent:Connect(function(_, uid) if uid == LocalPlayer.UserId then done = true end end)
         end
-        local deadline = os.clock() + 1.1
-        while not done and os.clock() < deadline do
-            if tpPos then briefTpForAction(tpPos) end
+        local deadline = os.clock() + 2.0
+        while not done and os.clock() < deadline and genv.ftgs_AutoBuyPet do
             doTame()
-            task.wait(0.025)
+            task.wait(0.018)
         end
         if conn then conn:Disconnect() end
         if done then trackPetBuy(getPetDisplayName(pick.species, nil), pick.price) end
@@ -2141,6 +2192,11 @@ function trySellAll()
     safeNetCall(Net.NPCS and Net.NPCS.SellAll)
 end
 
+function trySellEverytime()
+    if not genv.ftgs_AutoSellEverytime then return end
+    safeNetCall(Net.NPCS and Net.NPCS.SellAll)
+end
+
 function tryExpand()
     if not genv.ftgs_AutoExpand then return end
     if os.clock() - lastExpand < COOLDOWN.Expand then return end
@@ -2173,10 +2229,15 @@ function tryCollectMutationSeedsOnce()
             if not prompt then continue end
             local pos = spawn:IsA("BasePart") and spawn.Position or (spawn:IsA("Model") and spawn:GetPivot().Position)
             if not pos then continue end
-            slowFlyTo(pos)
-            fireProximityPrompt(prompt)
-            task.wait(MUTATION_COLLECT_WAIT)
+            movementBypass = true
+            instantTpOnce(pos)
+            local deadline = os.clock() + 2.0
+            while os.clock() < deadline and genv.ftgs_AutoCollectMutation do
+                fireProximityPrompt(prompt)
+                task.wait(0.018)
+            end
         end
+        movementBypass = false
         collectingMutation = false
     end)
 end
@@ -2284,8 +2345,14 @@ end
 
 MainTab = Window:Tab({ Title = "Main", Icon = "home" })
 MainTab:Section({ Title = "Farm" })
-makeToggle(MainTab, "Auto Harvest", "Collect ripe fruit only", "ftgs_AutoHarvest")
+makeToggle(MainTab, "Auto Harvest", "Collect ripe fruit (filters below)", "ftgs_AutoHarvest")
+MainTab:Input({ Title = "Harvest max weight (kg)", Value = tostring(harvestMaxWeight), Placeholder = "0 = off, 100 = under 100kg only", Callback = function(v)
+    harvestMaxWeight = math.max(0, tonumber(v) or 0)
+end })
+multiDropdown(MainTab, "Except Harvest", SeedNames, exceptHarvestPlants, true)
+multiDropdown(MainTab, "Collect Only", SeedNames, collectOnlyPlants, true)
 makeToggle(MainTab, "Auto Sell", "Sell when bag full", "ftgs_AutoSell")
+makeToggle(MainTab, "Auto Sell Everytime", "Sell loop 0.01s", "ftgs_AutoSellEverytime")
 makeToggle(MainTab, "Auto Expand Garden", "Auto expand plot", "ftgs_AutoExpand")
 makeToggle(MainTab, "Auto Sprinkler", "TP to plant then place (no duplicate per plant)", "ftgs_AutoSprinkler")
 multiDropdown(MainTab, "Select Sprinklers", SPRINKLER_LIST, selectedSprinklers)
@@ -2314,14 +2381,17 @@ MainTab:Input({ Title = "Mail message", Value = mailMessage, Placeholder = "mess
 end })
 
 AutoTab = Window:Tab({ Title = "Automation", Icon = "bot" })
-makeToggle(AutoTab, "Auto Steal", "Fast steal 3 -> return garden -> next plot", "ftgs_AutoSteal")
+AutoTab:Toggle({ Title = "Auto Steal", Desc = "Fast steal 3 -> garden -> next (off = stop instantly)", Default = genv.ftgs_AutoSteal or false, Callback = function(s)
+    genv.ftgs_AutoSteal = s
+    if not s then cancelStealAction() end
+end })
 makeToggle(AutoTab, "Auto Collect Drops", "TP nearest drop + pickup", "ftgs_AutoCollectDrops")
-makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Slow fly rainbow/gold/mega", "ftgs_AutoCollectMutation")
-makeToggle(AutoTab, "Auto Plant", "Plant on plot (walk slightly outside OK)", "ftgs_AutoPlant")
+makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Instant TP + claim (2s)", "ftgs_AutoCollectMutation")
+makeToggle(AutoTab, "Auto Plant", "Remote plant — walk freely", "ftgs_AutoPlant")
 multiDropdown(AutoTab, "Plant Seeds", PlantSeedNames, selectedPlantSeeds, false)
 makeToggle(AutoTab, "Auto Shovel", "Remove selected seed plants (batch)", "ftgs_AutoShovel")
 multiDropdown(AutoTab, "Shovel Seeds", SeedNames, selectedShovelSeeds, false)
-makeToggle(AutoTab, "Auto Buy Pet", "Segmented fly + tame", "ftgs_AutoBuyPet")
+makeToggle(AutoTab, "Auto Buy Pet", "Instant TP + tame in 2s", "ftgs_AutoBuyPet")
 multiDropdown(AutoTab, "Select Pets", PET_LIST, selectedPets, false)
 
 ShopTab = Window:Tab({ Title = "Shop", Icon = "shopping-cart" })
@@ -2412,6 +2482,10 @@ end)
 
 task.spawn(function()
     while true do if genv.ftgs_AutoSell then safeLoop(trySellAll) end task.wait(0.5) end
+end)
+
+task.spawn(function()
+    while true do if genv.ftgs_AutoSellEverytime then safeLoop(trySellEverytime) end task.wait(0.01) end
 end)
 
 task.spawn(function()
