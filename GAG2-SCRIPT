@@ -176,10 +176,17 @@ end
 
 local WINDUI_CACHE = "ntmthub/windui_patched_v6.lua"
 
+local function corner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 6)
+    c.Parent = parent
+end
+
 local function createBuiltinWindUI()
+    local hui = (type(gethui) == "function" and gethui()) or nil
     local lp = game:GetService("Players").LocalPlayer
     if not lp then return nil end
-    local pg = lp:FindFirstChild("PlayerGui") or lp:WaitForChild("PlayerGui", 10)
+    local pg = (hui and hui:IsA("Instance") and hui) or lp:FindFirstChild("PlayerGui") or lp:WaitForChild("PlayerGui", 15)
     if not pg then return nil end
     local old = pg:FindFirstChild("NTMTHubUI")
     if old then old:Destroy() end
@@ -199,7 +206,7 @@ local function createBuiltinWindUI()
     openBtn.Font = Enum.Font.GothamBold
     openBtn.TextSize = 13
     openBtn.Parent = sg
-    Instance.new("UICorner", openBtn).CornerRadius = UDim.new(0, 8)
+    corner(openBtn, 8)
 
     local panel = Instance.new("Frame")
     panel.Size = UDim2.new(0.82, 0, 0.74, 0)
@@ -207,7 +214,7 @@ local function createBuiltinWindUI()
     panel.BackgroundColor3 = Color3.fromRGB(13, 13, 13)
     panel.Visible = false
     panel.Parent = sg
-    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+    corner(panel, 10)
 
     local header = Instance.new("TextLabel")
     header.Size = UDim2.new(1, -8, 0, 30)
@@ -269,7 +276,7 @@ local function createBuiltinWindUI()
         btn.TextColor3 = Color3.new(1, 1, 1)
         btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
         btn.Parent = tabBar
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+        corner(btn, 5)
 
         tabFrames[title] = holder
         tabBtns[title] = btn
@@ -314,7 +321,7 @@ local function createBuiltinWindUI()
             b.Text = (on and "[ON] " or "[OFF] ") .. tostring(cfg.Title or "")
             b.BackgroundColor3 = on and Color3.fromRGB(90, 30, 75) or Color3.fromRGB(35, 35, 35)
             b.Parent = scroll
-            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+            corner(b, 6)
             b.MouseButton1Click:Connect(function()
                 on = not on
                 b.Text = (on and "[ON] " or "[OFF] ") .. tostring(cfg.Title or "")
@@ -334,7 +341,7 @@ local function createBuiltinWindUI()
             b.TextColor3 = Color3.new(1, 1, 1)
             b.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
             b.Parent = scroll
-            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+            corner(b, 6)
             b.MouseButton1Click:Connect(function() if cfg.Callback then cfg.Callback() end end)
         end
 
@@ -351,7 +358,7 @@ local function createBuiltinWindUI()
             box.TextColor3 = Color3.new(1, 1, 1)
             box.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
             box.Parent = scroll
-            Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+            corner(box, 6)
             box.FocusLost:Connect(function() if cfg.Callback then cfg.Callback(box.Text) end end)
         end
 
@@ -371,7 +378,7 @@ local function createBuiltinWindUI()
             b.TextColor3 = Color3.new(1, 1, 1)
             b.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
             b.Parent = scroll
-            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+            corner(b, 6)
             local function paint()
                 b.Text = tostring(cfg.Title or "Select") .. ": " .. tostring(values[idx] or "-")
             end
@@ -477,7 +484,6 @@ local function createBuiltinWindUI()
     end
     function lib:AddTheme() end
     function lib:SetTheme() end
-    print("[NTMT HUB] Built-in UI OK (WindUI skipped on this executor)")
     return lib
 end
 
@@ -591,6 +597,7 @@ local function loadWindUI()
     print("[NTMT HUB] WindUI loaded OK")
     return true
 end
+
 
 local function runMain()
 
@@ -711,8 +718,8 @@ SLOW_FLY_RATIO = 0.22
 PET_FIND_SCAN_SEC = 5
 FLY_STEP = 18
 SEGMENT_PAUSE = 1
-NEAR_PLAYER_DIST = 20
-PLOT_EDGE_MARGIN = 8
+NEAR_PLAYER_DIST = 45
+PLOT_EDGE_MARGIN = 32
 SPRINKLER_MIN_DIST = 8
 STEAL_BATCH = 3
 STEAL_HOLD_TIMEOUT = 12
@@ -1030,6 +1037,9 @@ end
 
 function setHasAny(set) return next(set) ~= nil end
 
+function normalizeSeedKey(name) return type(name) == "string" and string.gsub(name, "%s+", "") or name end
+function seedNamesMatch(a, b) return a == b or normalizeSeedKey(a) == normalizeSeedKey(b) end
+
 function seedInSet(set, name)
     if not setHasAny(set) then return true end
     for k in set do if seedNamesMatch(k, name) then return true end end
@@ -1066,6 +1076,24 @@ function isNearPlotForActions()
     return isWithinPlot(PLOT_EDGE_MARGIN)
 end
 
+function isNearGardenForPlant()
+    return isWithinPlot(PLOT_EDGE_MARGIN)
+end
+
+function snapToGardenSpot(pos)
+    if not pos then return false end
+    movementBypass = true
+    tpInstant(pos)
+    task.wait(0.06)
+    local hrp = getRoot()
+    if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+    end
+    return true
+end
+
 function slowFlyTo(targetPos)
     if not targetPos then return false end
     movementBypass = true
@@ -1091,6 +1119,21 @@ function slowFlyTo(targetPos)
     end
     movementBypass = false
     return false
+end
+
+function normalizePetName(s) return string.lower(string.gsub(s or "", "^%s*(.-)%s*$", "%1")) end
+function getPetDisplayName(species, size)
+    local ok, d = xpcall(PetData.GetDisplayName, noopErr, species, size)
+    if ok and type(d) == "string" then return d end
+    ok, d = xpcall(PetData.GetSpeciesDisplayName, noopErr, species)
+    if ok and type(d) == "string" then return d end
+    return species
+end
+function matchesPet(species, size, target)
+    local t = normalizePetName(target)
+    local d = normalizePetName(getPetDisplayName(species, size))
+    local s = normalizePetName(getPetDisplayName(species, nil))
+    return d == t or s == t or string.find(d, t, 1, true) or string.find(s, t, 1, true)
 end
 
 function matchesAnySelectedPet(species, size)
@@ -1171,6 +1214,44 @@ function getPlayerFlatPos()
     return hrp and Vector3.new(hrp.Position.X, 0, hrp.Position.Z) or nil
 end
 
+function getStealPrompt(fruit)
+    if not fruit then return nil end
+    local hp = fruit:FindFirstChild("HarvestPart") or fruit.PrimaryPart or fruit:FindFirstChildWhichIsA("BasePart")
+    if hp then
+        local prompt = hp:FindFirstChild("StealPrompt")
+        if prompt and not prompt:IsA("ProximityPrompt") then
+            prompt = prompt:IsA("ObjectValue") and prompt.Value or hp:FindFirstChildWhichIsA("ProximityPrompt")
+        end
+        if prompt then return prompt end
+        prompt = hp:FindFirstChildWhichIsA("ProximityPrompt")
+        if prompt then return prompt end
+    end
+    for _, desc in fruit:GetDescendants() do
+        if desc:IsA("ProximityPrompt") then
+            local action = (desc.ActionText or ""):lower()
+            if action:find("steal", 1, true) or desc.Name == "StealPrompt" then return desc end
+        end
+    end
+    return nil
+end
+
+function resolveStealTarget(fruit, ownerUserId)
+    local hp = fruit:FindFirstChild("HarvestPart") or fruit.PrimaryPart or fruit:FindFirstChildWhichIsA("BasePart", true)
+    local stealPos = hp and hp.Position
+    local uid = ownerUserId or tonumber(fruit:GetAttribute("UserId")) or tonumber(fruit:GetAttribute("OwnerUserId"))
+    local plantId = fruit:GetAttribute("PlantId") or fruit:GetAttribute("PlantID")
+    local fruitId = fruit:GetAttribute("FruitId") or fruit:GetAttribute("FruitID") or ""
+    if not plantId and fruit.Parent and fruit.Parent.Name == "Fruits" then
+        local plantModel = fruit.Parent.Parent
+        if plantModel then plantId = plantModel:GetAttribute("PlantId") or plantModel:GetAttribute("PlantID") end
+    end
+    if not plantId then
+        local anc = fruit:FindFirstAncestorWhichIsA("Model")
+        if anc then plantId = anc:GetAttribute("PlantId") or anc:GetAttribute("PlantID") or anc.Name end
+    end
+    return stealPos, uid, plantId, fruitId, hp
+end
+
 function isStealComplete(fruit, fruitCountBefore)
     if not fruit or not fruit.Parent then return true end
     if not getStealPrompt(fruit) then return true end
@@ -1190,9 +1271,6 @@ function getGearPrice(name)
     if not info then return math.huge end
     return (safeFlagGet(GearShopFlags and GearShopFlags.PriceOverrides))[name] or info.Cost or math.huge
 end
-
-function normalizeSeedKey(name) return type(name) == "string" and string.gsub(name, "%s+", "") or name end
-function seedNamesMatch(a, b) return a == b or normalizeSeedKey(a) == normalizeSeedKey(b) end
 
 function findGearTool(attrName, priority)
     local found = {}
@@ -1300,6 +1378,17 @@ function isSpotEmpty(pos, occupied)
     return true
 end
 
+function findPlantAreaPosition(nearPos)
+    if #plantAreas == 0 then refreshPlantAreas() end
+    if #plantAreas == 0 or not nearPos then return nil end
+    local bestPos, bestDist
+    for _, pos in plantAreas do
+        local d = (Vector3.new(pos.X, 0, pos.Z) - Vector3.new(nearPos.X, 0, nearPos.Z)).Magnitude
+        if not bestDist or d < bestDist then bestPos, bestDist = pos, d end
+    end
+    return bestPos
+end
+
 function findEmptyGardenSpotNearPlayer()
     refreshOwnerPlot()
     if #plantAreas == 0 then refreshPlantAreas() end
@@ -1315,7 +1404,15 @@ function findEmptyGardenSpotNearPlayer()
             end
         end
     end
-    if not best and isNearPlotForActions() then
+    if not best and isNearGardenForPlant() then
+        for _, pos in plantAreas do
+            if isSpotEmpty(pos, occupied) then
+                local d = flatDistXZ(pos, playerFlat)
+                if not bestDist or d < bestDist then best, bestDist = pos, d end
+            end
+        end
+    end
+    if not best and isNearGardenForPlant() then
         local hrp = getRoot()
         if hrp then
             local y = savedPlotCenter and savedPlotCenter.Y or hrp.Position.Y
@@ -1339,18 +1436,6 @@ function extractPlantDataPosition(plantData)
     return nil
 end
 
-function findPlantAreaPosition(nearPos)
-    if #plantAreas == 0 then refreshPlantAreas() end
-    if #plantAreas == 0 or not nearPos then return nil end
-    local bestPos, bestDist
-    for _, pos in plantAreas do
-        local d = (Vector3.new(pos.X, 0, pos.Z) - Vector3.new(nearPos.X, 0, nearPos.Z)).Magnitude
-        if not bestDist or d < bestDist then bestPos, bestDist = pos, d end
-    end
-    return bestPos
-end
-
-
 function isSprinklerSpotTaken(pos, plantKey)
     if plantKey and sprinkledPlantKeys[plantKey] then return true end
     for _, s in sprinkledSpots do
@@ -1370,7 +1455,7 @@ function findBestSprinklerSpotNearPlayer()
         local spot = findPlantAreaPosition(rawPos) or rawPos
         if isSprinklerSpotTaken(spot, plantKey) then return end
         local dist = flatDistXZ(spot, playerFlat)
-        if dist > NEAR_PLAYER_DIST then return end
+        if dist > NEAR_PLAYER_DIST and not isNearGardenForPlant() then return end
         local rank = getRarityRank(getSeedRarity(seed))
         local valueScore = (9 - math.min(rank, 8)) * 1000 + getSeedPrice(seed)
         candidates[#candidates + 1] = { pos = spot, score = valueScore - dist * 20, plantKey = plantKey }
@@ -1416,21 +1501,6 @@ function initMapFolders()
     end
 end
 initMapFolders()
-
-function normalizePetName(s) return string.lower(string.gsub(s or "", "^%s*(.-)%s*$", "%1")) end
-function getPetDisplayName(species, size)
-    local ok, d = xpcall(PetData.GetDisplayName, noopErr, species, size)
-    if ok and type(d) == "string" then return d end
-    ok, d = xpcall(PetData.GetSpeciesDisplayName, noopErr, species)
-    if ok and type(d) == "string" then return d end
-    return species
-end
-function matchesPet(species, size, target)
-    local t = normalizePetName(target)
-    local d = normalizePetName(getPetDisplayName(species, size))
-    local s = normalizePetName(getPetDisplayName(species, nil))
-    return d == t or s == t or string.find(d, t, 1, true) or string.find(s, t, 1, true)
-end
 
 function trackSeedBuy(name)
     local p = getSeedPrice(name)
@@ -1532,7 +1602,7 @@ end
 function tryAutoPlant()
     if not genv.ftgs_AutoPlant or plantingBusy or not setHasAny(selectedPlantSeeds) then return end
     if os.clock() - lastPlant < COOLDOWN.Plant then return end
-    if not isNearPlotForActions() then return end
+    if not isNearGardenForPlant() then return end
     local seedName, tool = pickNextPlantSeed()
     if not tool then return end
     local pos = findEmptyGardenSpotNearPlayer()
@@ -1540,6 +1610,7 @@ function tryAutoPlant()
     lastPlant = os.clock()
     plantingBusy = true
     task.spawn(function()
+        snapToGardenSpot(pos)
         equipTool(tool)
         tool = findSeedToolByName(seedName) or tool
         safeNetCall(Net.Plant and Net.Plant.PlantSeed, pos, seedName, tool)
@@ -1552,7 +1623,7 @@ end
 function trySprinkler()
     if not genv.ftgs_AutoSprinkler or sprinklerBusy then return end
     if os.clock() - lastGear < COOLDOWN.Gear then return end
-    if not isNearPlotForActions() then return end
+    if not isNearGardenForPlant() then return end
     local plotId = LocalPlayer:GetAttribute("PlotId")
     if not plotId then return end
     local placePos, plantKey = findBestSprinklerSpotNearPlayer()
@@ -1563,6 +1634,7 @@ function trySprinkler()
     lastGear = os.clock()
     sprinklerBusy = true
     task.spawn(function()
+        snapToGardenSpot(placePos)
         equipTool(spTool)
         safeNetCall(Net.Place and Net.Place.PlaceSprinkler, placePos, spName, spTool, plotId)
         sprinkledSpots[#sprinkledSpots + 1] = placePos
@@ -1631,7 +1703,8 @@ function plotUnlocked(player)
     if not player or not Gardens then return false end
     local plot
     for _, p in Gardens:GetChildren() do
-        if p:GetAttribute("OwnerUserId") == player.UserId then plot = p break end
+        local oid = tonumber(p:GetAttribute("OwnerUserId")) or p:GetAttribute("OwnerUserId")
+        if oid == player.UserId then plot = p break end
     end
     if not plot then return true end
     local area = plot:FindFirstChild("Visual") and plot.Visual:FindFirstChild("PlotSizeReferenceVisual")
@@ -1655,16 +1728,6 @@ function getPlotCenterPos(plot)
     local psr = plot:FindFirstChild("PlotSizeReference")
     if psr and psr:IsA("BasePart") then return psr.Position end
     return plot:GetPivot().Position
-end
-
-function getStealPrompt(fruit)
-    local hp = fruit and fruit:FindFirstChild("HarvestPart")
-    if not hp then return nil end
-    local prompt = hp:FindFirstChild("StealPrompt")
-    if prompt and not prompt:IsA("ProximityPrompt") then
-        prompt = prompt:IsA("ObjectValue") and prompt.Value or hp:FindFirstChildWhichIsA("ProximityPrompt")
-    end
-    return prompt or hp:FindFirstChildWhichIsA("ProximityPrompt")
 end
 
 function getStealableFruitsOnPlot(plot, limit)
@@ -1692,9 +1755,9 @@ function findBestStealPlot()
     if not Gardens then return nil, nil end
     for _, plot in Gardens:GetChildren() do
         local oid = plot:GetAttribute("OwnerUserId")
-        local owner = oid and Services.Players:GetPlayerByUserId(oid)
+        local owner = oid and Services.Players:GetPlayerByUserId(tonumber(oid) or oid)
         if owner and owner ~= LocalPlayer and plotUnlocked(owner) then
-            local fruits = getStealableFruitsOnPlot(plot, 1)
+            local fruits = getStealableFruitsOnPlot(plot, STEAL_BATCH)
             if fruits[1] then
                 local v = calculateStealValue(fruits[1])
                 if v > bestValue then bestPlot, bestOwner, bestValue = plot, owner, v end
@@ -1707,46 +1770,50 @@ end
 function fireProximityPrompt(prompt)
     if not prompt then return false end
     local fn = fireproximityprompt or rawget(genv, "fireproximityprompt")
-    if type(fn) == "function" and select(1, xpcall(fn, noopErr, prompt, 0)) then return true end
+    if type(fn) == "function" then
+        if select(1, xpcall(fn, noopErr, prompt)) then return true end
+        if select(1, xpcall(fn, noopErr, prompt, 0)) then return true end
+    end
     if type(prompt.InputHoldBegin) ~= "function" or type(prompt.InputHoldEnd) ~= "function" then return false end
     return xpcall(function()
         prompt:InputHoldBegin()
-        if prompt.HoldDuration > 0 then task.wait(prompt.HoldDuration + 0.05) end
+        local hold = prompt.HoldDuration or 0
+        if hold > 0 then task.wait(hold + 0.08) else task.wait(0.15) end
         prompt:InputHoldEnd()
     end, noopErr)
 end
 
 function stealFruit(fruit, ownerUserId)
     if not fruit or not fruit.Parent then return false end
-    local hp = fruit:FindFirstChild("HarvestPart")
-    if not hp then return false end
-    local stealPos = hp.Position
-    local uid = ownerUserId or tonumber(fruit:GetAttribute("UserId"))
-    local plantId = fruit:GetAttribute("PlantId")
-    local fruitId = fruit:GetAttribute("FruitId") or ""
-    if not uid or not plantId then return false end
+    local stealPos, uid, plantId, fruitId = resolveStealTarget(fruit, ownerUserId)
+    if not stealPos or not uid or not plantId then return false end
 
     local fruitCountBefore = getFruitCount()
     movementBypass = true
+    gardenActionLock = true
+    local deadline = os.clock() + STEAL_HOLD_TIMEOUT
 
-    for _ = 1, 25 do
+    while os.clock() < deadline do
         if isStealComplete(fruit, fruitCountBefore) then break end
+        if not fruit.Parent then break end
         tpInstant(stealPos)
-        task.wait(0.06)
+        task.wait(0.05)
         local hrp = getRoot()
         if hrp then
             hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
             hrp.CFrame = CFrame.new(stealPos + Vector3.new(0, 3, 0))
         end
         local prompt = getStealPrompt(fruit)
         if prompt then fireProximityPrompt(prompt) end
         safeNetCall(Net.Steal and Net.Steal.BeginSteal, uid, plantId, fruitId)
-        task.wait(0.05)
+        task.wait(0.06)
         safeNetCall(Net.Steal and Net.Steal.CompleteSteal)
         task.wait(0.08)
     end
 
     movementBypass = false
+    gardenActionLock = false
 
     if isStealComplete(fruit, fruitCountBefore) then
         StolenFruits[#StolenFruits + 1] = { name = fruit.Name .. " (" .. tostring(calculateStealValue(fruit)) .. ")", time = os.time() }
@@ -1760,6 +1827,8 @@ function tryAutoSteal()
     if not genv.ftgs_AutoSteal or stealBusy or isInventoryFull() then return end
     stealBusy = true
     task.spawn(function()
+        safeNetCall(Net.Garden and Net.Garden.RequestGardens)
+        task.wait(0.08)
         movementBypass = true
         local plot, owner = findBestStealPlot()
         if plot and owner and plotUnlocked(owner) then
@@ -1767,7 +1836,7 @@ function tryAutoSteal()
             for i = 1, math.min(STEAL_BATCH, #fruits) do
                 if isInventoryFull() or not plotUnlocked(owner) then break end
                 stealFruit(fruits[i], owner.UserId)
-                task.wait(0.05)
+                task.wait(0.2)
             end
         end
         movementBypass = false
@@ -2422,6 +2491,7 @@ pcall(function()
     })
 end)
 
+
 end -- runMain
 
 task.defer(function()
@@ -2430,6 +2500,7 @@ task.defer(function()
         return tostring(e)
     end)
     if not ok then
+        genv.__NTMT_HUB_RUNNING = nil
         warn("========================================")
         warn("[NTMT HUB] SCRIPT CRASHED:")
         warn(tostring(err))
