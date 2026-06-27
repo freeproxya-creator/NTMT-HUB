@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.3 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.3")
+--[[ NTMT HUB - Grow a Garden 2 v6.4 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.4")
 
 pcall(function()
     if delfile and isfile then
@@ -642,6 +642,7 @@ Services = {
     HttpService = cloneref(game:GetService("HttpService")),
     RunService = cloneref(game:GetService("RunService")),
     Lighting = cloneref(game:GetService("Lighting")),
+    MaterialService = cloneref(game:GetService("MaterialService")),
 }
 
 LocalPlayer = Services.Players.LocalPlayer or Services.Players.PlayerAdded:Wait()
@@ -820,6 +821,28 @@ genv.ftgs_AutoFindPet = false
 genv.ftgs_AutoEquipBestPet = false
 genv.ftgs_AutoWebhook = false
 genv.ftgs_AutoSendMail = false
+genv.ftgs_FixLag = false
+genv.ftgs_AutoExecute = false
+genv.ftgs_AutoTranslate = false
+
+NTMT_EXEC_PATHS = {
+    "ntmthub/roblox_windui_model_script.lua",
+    "roblox_windui_model_script.lua",
+    "NTMT_HUB.lua",
+    "ntmthub_gag2.lua",
+}
+HITBOX_BODY_PARTS = { "UpperTorso", "LowerTorso", "Torso", "Head", "HumanoidRootPart" }
+HITBOX_SIZE = 21
+HITBOX_TRANSPARENCY = 0.6
+TRANSLATE_LANG_NAMES = {
+    "English", "Vietnamese", "Thai", "Russian", "Portuguese", "Korean",
+    "Japanese", "German", "French", "Spanish", "Indonesian", "Filipino",
+}
+TRANSLATE_LANG_CODES = {
+    English = "en", Vietnamese = "vi", Thai = "th", Russian = "ru", Portuguese = "pt",
+    Korean = "ko", Japanese = "ja", German = "de", French = "fr", Spanish = "es",
+    Indonesian = "id", Filipino = "tl",
+}
 
 selectedBuySeeds, selectedBuyGears = {}, {}
 selectedPlantSeeds, selectedShovelSeeds, selectedSprinklers, selectedPets = { Carrot = true }, { Carrot = true }, { ["Super Sprinkler"] = true }, { Unicorn = true }
@@ -836,6 +859,11 @@ lastStockSnapshot = {}
 fruitEspFolder, fruitEspHighlight, fruitEspBillboard = nil, nil, nil
 savedLighting, fullbrightStepConn = nil, nil
 movementHumConn, movementJumpConn = nil, nil
+hitboxOriginalProps, defendHitboxActive = {}, false
+translateLanguage = "English"
+translationRegistry, translationCache = {}, {}
+fpsBoosterConn, fpsBoosterRestore = nil, nil
+autoExecuteQueued = false
 
 BoughtSeeds, BoughtGears, BoughtPets = {}, {}, {}
 StolenFruits = {}
@@ -872,6 +900,11 @@ function saveConfig()
             BoughtPets = BoughtPets,
             StolenFruits = StolenFruits,
             totalPlaySeconds = totalPlaySeconds + (os.time() - sessionStart),
+            autoExecute = genv.ftgs_AutoExecute == true,
+            fixLag = genv.ftgs_FixLag == true,
+            autoTranslate = genv.ftgs_AutoTranslate == true,
+            translateLanguage = translateLanguage,
+            scriptUrl = genv.NTMT_SCRIPT_URL or "",
         }))
     end, noopErr)
 end
@@ -899,6 +932,11 @@ function loadConfig()
     if type(data.BoughtGears) == "table" then BoughtGears = data.BoughtGears end
     if type(data.BoughtPets) == "table" then BoughtPets = data.BoughtPets end
     if type(data.StolenFruits) == "table" then StolenFruits = data.StolenFruits end
+    if data.autoExecute ~= nil then genv.ftgs_AutoExecute = data.autoExecute == true end
+    if data.fixLag ~= nil then genv.ftgs_FixLag = data.fixLag == true end
+    if data.autoTranslate ~= nil then genv.ftgs_AutoTranslate = data.autoTranslate == true end
+    if type(data.translateLanguage) == "string" then translateLanguage = data.translateLanguage end
+    if type(data.scriptUrl) == "string" and data.scriptUrl ~= "" then genv.NTMT_SCRIPT_URL = data.scriptUrl end
     totalPlaySeconds = tonumber(data.totalPlaySeconds) or totalPlaySeconds
     sessionStart = os.time()
 end
@@ -1279,33 +1317,121 @@ function getPlayersNearPosition(pos, radius)
     return out
 end
 
-function hitPlayerWithShovel(targetPlr)
+function findExactBodyPart(char, partName)
+    if not char then return nil end
+    local want = string.lower(partName)
+    for _, part in char:GetChildren() do
+        if part:IsA("BasePart") and string.lower(part.Name) == want then return part end
+    end
+    return nil
+end
+
+function saveHitboxPart(plr, part)
+    if not hitboxOriginalProps[plr] then hitboxOriginalProps[plr] = {} end
+    if not hitboxOriginalProps[plr][part.Name] then
+        hitboxOriginalProps[plr][part.Name] = {
+            CanCollide = part.CanCollide,
+            Transparency = part.Transparency,
+            Size = part.Size,
+        }
+    end
+end
+
+function extendPlayerHitbox(plr)
+    if not plr or not plr.Character then return end
+    for _, partName in HITBOX_BODY_PARTS do
+        local part = findExactBodyPart(plr.Character, partName)
+        if part then
+            saveHitboxPart(plr, part)
+            part.CanCollide = true
+            part.Transparency = HITBOX_TRANSPARENCY
+            part.Size = Vector3.new(HITBOX_SIZE, HITBOX_SIZE, HITBOX_SIZE)
+        end
+    end
+end
+
+function restorePlayerHitbox(plr)
+    local saved = hitboxOriginalProps[plr]
+    if not saved then return end
+    if plr.Character then
+        for partName, props in saved do
+            local part = plr.Character:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                part.CanCollide = props.CanCollide
+                part.Transparency = props.Transparency
+                part.Size = props.Size
+            end
+        end
+    end
+    hitboxOriginalProps[plr] = nil
+end
+
+function restoreAllHitboxes()
+    for _, plr in Services.Players:GetPlayers() do restorePlayerHitbox(plr) end
+    hitboxOriginalProps = {}
+    defendHitboxActive = false
+end
+
+function updateDefendHitboxes(petPos)
+    if not genv.ftgs_AutoDefendPet or not isCatchingPet or not petPos then
+        if defendHitboxActive then restoreAllHitboxes() end
+        return
+    end
+    defendHitboxActive = true
+    for _, plr in Services.Players:GetPlayers() do
+        if plr ~= LocalPlayer and plr.Character then
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and (hrp.Position - petPos).Magnitude <= PET_DEFEND_RADIUS + 15 then
+                extendPlayerHitbox(plr)
+            else
+                restorePlayerHitbox(plr)
+            end
+        end
+    end
+end
+
+function shovelClickAttack(shovel)
+    if not shovel then return end
+    for _ = 1, 12 do
+        if type(shovel.Activate) == "function" then
+            xpcall(function() shovel:Activate() end, noopErr)
+        end
+        local vu = Services.VirtualUser
+        if vu and type(vu.ClickButton1) == "function" then
+            xpcall(function() vu:ClickButton1(Vector2.new(420, 320)) end, noopErr)
+        end
+        task.wait(0.02)
+    end
+end
+
+function hitPlayerWithShovel(targetPlr, shovelTool)
     if not targetPlr or not targetPlr.Character then return end
-    local shovel, shovelName = findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" })
+    extendPlayerHitbox(targetPlr)
+    local shovel = shovelTool or select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
     if not shovel then return end
     equipTool(shovel)
     shovel = select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" })) or shovel
-    if type(shovel.Activate) == "function" then
-        for _ = 1, 4 do
-            xpcall(function() shovel:Activate() end, noopErr)
-            task.wait(0.025)
-        end
+    local thrp = targetPlr.Character:FindFirstChild("HumanoidRootPart")
+    local hrp = getRoot()
+    if thrp and hrp then
+        local offset = (hrp.Position - thrp.Position).Magnitude > 1 and (hrp.Position - thrp.Position).Unit * 3.5 or Vector3.new(0, 0, 3.5)
+        hrp.CFrame = CFrame.new(thrp.Position + offset + Vector3.new(0, 2, 0))
+        hrp.AssemblyLinearVelocity = Vector3.zero
     end
-    safeNetCall(Net.Shovel and Net.Shovel.HitPlayer, targetPlr.UserId, shovelName, shovel)
-    safeNetCall(Net.Actions and Net.Actions.ShovelHit, targetPlr)
+    shovelClickAttack(shovel)
+    safeNetCall(Net.Shovel and Net.Shovel.HitPlayer, targetPlr.UserId, shovel.Name, shovel)
 end
 
 function tryDefendPetAt(pos)
     if not genv.ftgs_AutoDefendPet or not pos then return false end
     local intruders = getPlayersNearPosition(pos, PET_DEFEND_RADIUS)
+    local shovel = select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
+    if shovel and #intruders > 0 then equipTool(shovel) end
+    updateDefendHitboxes(pos)
     if #intruders == 0 then return false end
-    local target = intruders[1]
-    local thrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-    if not thrp then return false end
-    stickToPosition(thrp.Position)
-    task.wait(0.03)
-    hitPlayerWithShovel(target)
-    task.wait(0.04)
+    for _, target in intruders do
+        hitPlayerWithShovel(target, shovel)
+    end
     stickToPosition(pos)
     return true
 end
@@ -2204,6 +2330,42 @@ function fireProximityPrompt(prompt)
     end, noopErr)
 end
 
+function fireProximityPromptFast(prompt)
+    if not prompt then return false end
+    local fn = fireproximityprompt or rawget(genv, "fireproximityprompt")
+    if type(fn) == "function" then
+        for _ = 1, 4 do
+            xpcall(fn, noopErr, prompt)
+            xpcall(fn, noopErr, prompt, 0)
+        end
+        return true
+    end
+    if type(prompt.InputHoldBegin) ~= "function" or type(prompt.InputHoldEnd) ~= "function" then return false end
+    return xpcall(function()
+        for _ = 1, 3 do
+            prompt:InputHoldBegin()
+            task.wait(0.012)
+            prompt:InputHoldEnd()
+        end
+    end, noopErr)
+end
+
+function isMutationSeedSpawn(spawn)
+    if not spawn then return false end
+    return spawn:GetAttribute("RainbowSeed") == true
+        or spawn:GetAttribute("GoldSeed") == true
+        or spawn:GetAttribute("MegaSeed") == true
+end
+
+function findMutationSeedSpawn()
+    initMapFolders()
+    if not SeedPackSpawns then return nil end
+    for _, spawn in SeedPackSpawns:GetChildren() do
+        if isMutationSeedSpawn(spawn) and spawn.Parent then return spawn end
+    end
+    return nil
+end
+
 function stealFruit(fruit, ownerUserId, sessionId)
     if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then return false end
     if not fruit or not fruit.Parent then return false end
@@ -2342,11 +2504,18 @@ function tryBuyPet()
             local pos = getWildPetPosition(pick)
             if pos then
                 stickToPosition(pos)
-                if genv.ftgs_AutoDefendPet then tryDefendPetAt(pos) end
+                if genv.ftgs_AutoDefendPet then
+                    local intruders = getPlayersNearPosition(pos, PET_DEFEND_RADIUS)
+                    local shovel = select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
+                    if shovel and #intruders > 0 then equipTool(shovel) end
+                    updateDefendHitboxes(pos)
+                    if #intruders > 0 then tryDefendPetAt(pos) end
+                end
             end
             doTame()
             task.wait(0.015)
         end
+        restoreAllHitboxes()
         if conn then conn:Disconnect() end
         if done then trackPetBuy(getPetDisplayName(pick.species, nil), pick.price) end
         if hum then hum.PlatformStand = false end
@@ -2459,6 +2628,262 @@ end
 function formatMinutesSeconds(totalSec)
     totalSec = math.max(0, math.floor(totalSec or 0))
     return string.format("%dm%02ds", math.floor(totalSec / 60), totalSec % 60)
+end
+
+function translateUiText(text)
+    if not genv.ftgs_AutoTranslate or type(text) ~= "string" or text == "" then return text end
+    local code = TRANSLATE_LANG_CODES[translateLanguage] or "en"
+    local cacheKey = code .. ":" .. text
+    if translationCache[cacheKey] then return translationCache[cacheKey] end
+    local ok, result = xpcall(function()
+        local url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl="
+            .. code .. "&dt=t&q=" .. Services.HttpService:UrlEncode(text)
+        local body = universalHttpGet(url)
+        if not body then return text end
+        local decoded = Services.HttpService:JSONDecode(body)
+        local out = ""
+        if decoded and decoded[1] then
+            for _, chunk in decoded[1] do
+                if chunk[1] then out = out .. chunk[1] end
+            end
+        end
+        return out ~= "" and out or text
+    end, noopErr)
+    if ok and type(result) == "string" and result ~= "" then
+        translationCache[cacheKey] = result
+        return result
+    end
+    return text
+end
+
+function registerUiTextInstance(inst)
+    if not inst or (not inst:IsA("TextLabel") and not inst:IsA("TextButton") and not inst:IsA("TextBox")) then return end
+    if translationRegistry[inst] then return end
+    local data = { original = inst.Text, translating = false }
+    translationRegistry[inst] = data
+    inst:GetPropertyChangedSignal("Text"):Connect(function()
+        if data.translating then return end
+        data.original = inst.Text
+        if genv.ftgs_AutoTranslate and data.original ~= "" then
+            task.spawn(function()
+                data.translating = true
+                inst.Text = translateUiText(data.original)
+                data.translating = false
+            end)
+        end
+    end)
+    if genv.ftgs_AutoTranslate and data.original ~= "" then
+        task.spawn(function()
+            data.translating = true
+            inst.Text = translateUiText(data.original)
+            data.translating = false
+        end)
+    end
+end
+
+function refreshAllUiTranslations()
+    for inst, data in translationRegistry do
+        if not inst or not inst.Parent then
+            translationRegistry[inst] = nil
+        elseif genv.ftgs_AutoTranslate then
+            task.spawn(function()
+                data.translating = true
+                inst.Text = translateUiText(data.original)
+                data.translating = false
+            end)
+        else
+            inst.Text = data.original
+        end
+    end
+end
+
+function setupUiTranslationWatcher()
+    local function scan(root)
+        if not root then return end
+        for _, d in root:GetDescendants() do registerUiTextInstance(d) end
+        root.DescendantAdded:Connect(function(d) task.defer(function() registerUiTextInstance(d) end) end)
+    end
+    scan(LocalPlayer:WaitForChild("PlayerGui"))
+    xpcall(function() scan(game:GetService("CoreGui")) end, noopErr)
+end
+
+function cacheScriptSourceForAutoExec()
+    if type(genv.__NTMT_SOURCE) == "string" and #genv.__NTMT_SOURCE > 200 then return end
+    if not (readfile and isfile) then return end
+    for _, path in NTMT_EXEC_PATHS do
+        if isfile(path) then
+            local ok, src = xpcall(readfile, noopErr, path)
+            if ok and type(src) == "string" and #src > 200 then
+                genv.__NTMT_SOURCE = src
+                return
+            end
+        end
+    end
+end
+
+function buildAutoExecutePayload()
+    if type(genv.NTMT_SCRIPT_URL) == "string" and genv.NTMT_SCRIPT_URL ~= "" then
+        return string.format([[
+task.defer(function()
+    local ok, src = pcall(function() return game:HttpGet(%q) end)
+    if ok and type(src) == "string" then loadstring(src, "NTMT")() end
+end)
+]], genv.NTMT_SCRIPT_URL)
+    end
+    if type(genv.__NTMT_SOURCE) == "string" and #genv.__NTMT_SOURCE > 200 then
+        genv.__NTMT_SOURCE_B64 = genv.__NTMT_SOURCE
+        return [[
+task.defer(function()
+    local s = getgenv().__NTMT_SOURCE_B64 or getgenv().__NTMT_SOURCE
+    if type(s) == "string" then loadstring(s, "NTMT")() end
+end)
+]]
+    end
+    if readfile and isfile then
+        for _, path in NTMT_EXEC_PATHS do
+            if isfile(path) then
+                return string.format([[
+task.defer(function()
+    if readfile and isfile(%q) then loadstring(readfile(%q), "NTMT")() end
+end)
+]], path, path)
+            end
+        end
+    end
+    return nil
+end
+
+function setupAutoExecute()
+    local queueFn = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+    if type(queueFn) ~= "function" then return end
+    cacheScriptSourceForAutoExec()
+    local payload = buildAutoExecutePayload()
+    if not payload then return end
+    LocalPlayer.OnTeleport:Connect(function(state)
+        if not genv.ftgs_AutoExecute or autoExecuteQueued then return end
+        if state == Enum.TeleportState.Started or state == Enum.TeleportState.InProgress then
+            autoExecuteQueued = true
+            xpcall(function() queueFn(payload) end, noopErr)
+        end
+    end)
+end
+
+function stopFixLag()
+    if fpsBoosterConn then fpsBoosterConn:Disconnect() fpsBoosterConn = nil end
+    if type(fpsBoosterRestore) == "function" then xpcall(fpsBoosterRestore, noopErr) fpsBoosterRestore = nil end
+end
+
+function startFixLag()
+    stopFixLag()
+    local Workspace = Services.Workspace
+    local Lighting = Services.Lighting
+    local MaterialService = Services.MaterialService
+    local saved = { lighting = {}, instances = setmetatable({}, { __mode = "k" }) }
+    local queue, qHead, qTail, qSize = {}, 1, 0, 0
+    local function qPush(x) qTail += 1 queue[qTail] = x qSize += 1 end
+    local function qPopBatch(n)
+        local out, count = {}, math.min(n, qSize)
+        for i = 1, count do out[i] = queue[qHead] queue[qHead] = nil qHead += 1 qSize -= 1 end
+        return out
+    end
+    local function ignored(inst)
+        if not inst or (LocalPlayer.Character and inst:IsDescendantOf(LocalPlayer.Character)) then return true end
+        return inst:IsA("Terrain")
+    end
+    local function saveOnce(obj, prop, val)
+        local e = saved.instances[obj] or {}
+        saved.instances[obj] = e
+        if e[prop] == nil then e[prop] = val end
+    end
+    local function optimize(inst)
+        if not inst or ignored(inst) then return end
+        local class = inst.ClassName
+        if class == "ParticleEmitter" or class == "Trail" or class == "Smoke" or class == "Fire" or class == "Sparkles" then
+            if pcall(function() return inst.Enabled end) then saveOnce(inst, "Enabled", inst.Enabled) end
+            pcall(function() inst.Enabled = false end)
+            return
+        end
+        if class == "Beam" then
+            if pcall(function() return inst.Enabled end) then saveOnce(inst, "Enabled", inst.Enabled) end
+            pcall(function() inst.Enabled = false end)
+            return
+        end
+        if inst:IsA("PostEffect") then
+            if pcall(function() return inst.Enabled end) then saveOnce(inst, "Enabled", inst.Enabled) end
+            pcall(function() inst.Enabled = false end)
+            return
+        end
+        if inst:IsA("MeshPart") or inst:IsA("BasePart") then
+            pcall(function()
+                if inst.Material then saveOnce(inst, "Material", inst.Material) inst.Material = Enum.Material.Plastic end
+                if inst.Reflectance then saveOnce(inst, "Reflectance", inst.Reflectance) inst.Reflectance = 0 end
+                if inst.CastShadow ~= nil then saveOnce(inst, "CastShadow", inst.CastShadow) inst.CastShadow = false end
+                if inst.RenderFidelity ~= nil then saveOnce(inst, "RenderFidelity", inst.RenderFidelity) inst.RenderFidelity = 2 end
+            end)
+            return
+        end
+        if inst:IsA("Decal") or inst:IsA("Texture") then
+            pcall(function() saveOnce(inst, "Transparency", inst.Transparency) inst.Transparency = 1 end)
+        end
+    end
+    pcall(function()
+        saved.lighting.GlobalShadows = Lighting.GlobalShadows
+        Lighting.GlobalShadows = false
+        saved.lighting.FogEnd = Lighting.FogEnd
+        Lighting.FogEnd = 9e9
+        local terrain = Workspace:FindFirstChildOfClass("Terrain")
+        if terrain then
+            saved.lighting.Terrain = {
+                WaterWaveSize = terrain.WaterWaveSize,
+                WaterWaveSpeed = terrain.WaterWaveSpeed,
+                WaterReflectance = terrain.WaterReflectance,
+                WaterTransparency = terrain.WaterTransparency,
+            }
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterReflectance = 0
+            terrain.WaterTransparency = 0
+        end
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+        pcall(function() MaterialService.Use2022Materials = false end)
+    end)
+    for _, ch in Workspace:GetChildren() do qPush(ch) end
+    Workspace.DescendantAdded:Connect(function(d) task.delay(0.1, function() if d then qPush(d) end end) end)
+    local elapsed = 0
+    fpsBoosterConn = Services.RunService.Heartbeat:Connect(function(dt)
+        elapsed += dt
+        if elapsed < 0.08 then return end
+        elapsed = 0
+        if qSize <= 0 then return end
+        local batch = qPopBatch(120)
+        for i = 1, #batch do
+            local node = batch[i]
+            if node and node.Parent then optimize(node) end
+        end
+    end)
+    fpsBoosterRestore = function()
+        for obj, props in saved.instances do
+            if obj and obj.Parent then
+                for prop, val in props do pcall(function() obj[prop] = val end) end
+            end
+        end
+        for k, v in saved.lighting do
+            if k == "Terrain" then
+                local terrain = Workspace:FindFirstChildOfClass("Terrain")
+                if terrain and type(v) == "table" then
+                    for pk, pv in v do pcall(function() terrain[pk] = pv end) end
+                end
+            else
+                pcall(function() Lighting[k] = v end)
+            end
+        end
+    end
+end
+
+function setFixLag(on)
+    genv.ftgs_FixLag = on == true
+    if genv.ftgs_FixLag then startFixLag() else stopFixLag() end
+    saveConfig()
 end
 
 function hubNotify(title, content)
@@ -2816,26 +3241,22 @@ function getMutationSpawnPosition(spawn)
 end
 
 function tryCollectMutationSeedsOnce()
-    if not genv.ftgs_AutoCollectMutation or collectingMutation or not SeedPackSpawns then return end
+    if not genv.ftgs_AutoCollectMutation or collectingMutation then return end
+    local spawn = findMutationSeedSpawn()
+    if not spawn then return end
     collectingMutation = true
     task.spawn(function()
-        initMapFolders()
         movementBypass = true
         gardenActionLock = true
-        for _, spawn in SeedPackSpawns:GetChildren() do
-            if not genv.ftgs_AutoCollectMutation then break end
-            if spawn:GetAttribute("RainbowSeed") ~= true and spawn:GetAttribute("GoldSeed") ~= true and spawn:GetAttribute("MegaSeed") ~= true then continue end
-            local prompt = spawn:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if not prompt then continue end
-            local deadline = os.clock() + 2.0
-            while os.clock() < deadline and genv.ftgs_AutoCollectMutation do
-                local pos = getMutationSpawnPosition(spawn)
-                if pos then stickToPosition(pos) end
-                fireProximityPrompt(prompt)
-                task.wait(0.015)
-            end
-        end
         local hum = getHumanoid()
+        local target = spawn
+        while genv.ftgs_AutoCollectMutation and target and target.Parent do
+            local pos = getMutationSpawnPosition(target)
+            if pos then stickToPosition(pos) end
+            local prompt = target:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then fireProximityPromptFast(prompt) end
+            task.wait(0.006)
+        end
         if hum then hum.PlatformStand = false end
         movementBypass = false
         gardenActionLock = false
@@ -2955,7 +3376,7 @@ Window = WindUI:CreateWindow({
     OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
 })
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.3", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.4", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
 
@@ -3025,13 +3446,13 @@ AutoTab:Toggle({ Title = "Auto Steal", Desc = "Fast steal 3 -> garden -> next (o
     if not s then cancelStealAction() end
 end })
 makeToggle(AutoTab, "Auto Collect Drops", "TP nearest drop + pickup", "ftgs_AutoCollectDrops")
-makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Follow spawn + claim (2s, like pet)", "ftgs_AutoCollectMutation")
+makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Stick spawn + fast claim until gone", "ftgs_AutoCollectMutation")
 makeToggle(AutoTab, "Auto Plant", "Remote plant — skip garden center", "ftgs_AutoPlant")
 multiDropdown(AutoTab, "Plant Seeds", PlantSeedNames, selectedPlantSeeds, false)
 makeToggle(AutoTab, "Auto Shovel", "Remove selected seed plants (batch)", "ftgs_AutoShovel")
 multiDropdown(AutoTab, "Shovel Seeds", SeedNames, selectedShovelSeeds, false)
-makeToggle(AutoTab, "Auto Buy Pet", "Follow pet + tame 2s + defend", "ftgs_AutoBuyPet")
-makeToggle(AutoTab, "Auto Defend Pet", "Shovel intruders near pet while taming", "ftgs_AutoDefendPet")
+makeToggle(AutoTab, "Auto Buy Pet", "Follow pet + tame + defend", "ftgs_AutoBuyPet")
+makeToggle(AutoTab, "Auto Defend Pet", "Shovel + hitbox hit intruders", "ftgs_AutoDefendPet")
 multiDropdown(AutoTab, "Select Pets", PET_LIST, selectedPets, false)
 
 ShopTab = Window:Tab({ Title = "Shop", Icon = "shopping-cart" })
@@ -3113,6 +3534,31 @@ makeToggle(SettingsTab, "Anti Hit", "No shovel knockback when player nearby", "f
 SettingsTab:Section({ Title = "Visual" })
 SettingsTab:Toggle({ Title = "Fullbright", Desc = "Night looks like day", Default = genv.ftgs_Fullbright or false, Callback = function(s) setFullbright(s) end })
 SettingsTab:Toggle({ Title = "Fruit ESP", Desc = "Highlight highest value fruit on server", Default = genv.ftgs_FruitESP ~= false, Callback = function(s) genv.ftgs_FruitESP = s if not s then clearFruitEsp() end end })
+SettingsTab:Toggle({ Title = "Fix Lag", Desc = "FPS boost — less particles/shadows", Default = genv.ftgs_FixLag or false, Callback = function(s) setFixLag(s) end })
+SettingsTab:Section({ Title = "Auto Execute" })
+SettingsTab:Input({ Title = "Script URL (optional)", Value = genv.NTMT_SCRIPT_URL or "", Placeholder = "raw github link if no readfile", Callback = function(v)
+    genv.NTMT_SCRIPT_URL = v or ""
+    saveConfig()
+    cacheScriptSourceForAutoExec()
+end })
+SettingsTab:Toggle({ Title = "Auto Execute", Desc = "Re-run script after rejoin/teleport", Default = genv.ftgs_AutoExecute or false, Callback = function(s)
+    genv.ftgs_AutoExecute = s
+    saveConfig()
+    cacheScriptSourceForAutoExec()
+end })
+SettingsTab:Section({ Title = "Auto Translate" })
+SettingsTab:Toggle({ Title = "Auto Translate UI", Desc = "Translate menu text", Default = genv.ftgs_AutoTranslate or false, Callback = function(s)
+    genv.ftgs_AutoTranslate = s
+    saveConfig()
+    refreshAllUiTranslations()
+end })
+SettingsTab:Dropdown({ Title = "Language", Values = TRANSLATE_LANG_NAMES, Value = translateLanguage, Callback = function(v)
+    if type(v) == "table" then v = v[1] end
+    translateLanguage = v or translateLanguage
+    table.clear(translationCache)
+    saveConfig()
+    refreshAllUiTranslations()
+end })
 makeToggle(SettingsTab, "Anti Steal Guard", "Lock plot when intruder enters", "ftgs_AntiStealGuard")
 
 InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
@@ -3177,7 +3623,7 @@ end)
 task.spawn(function()
     while true do
         if genv.ftgs_AutoCollectMutation and not collectingMutation then safeLoop(tryCollectMutationSeedsOnce) end
-        task.wait(2)
+        task.wait(collectingMutation and 0.04 or 0.1)
     end
 end)
 
@@ -3358,6 +3804,13 @@ if LocalPlayer then
 end
 
 setupShopRestockWatch()
+cacheScriptSourceForAutoExec()
+setupAutoExecute()
+if genv.ftgs_FixLag then startFixLag() end
+task.defer(function()
+    xpcall(setupUiTranslationWatcher, noopErr)
+    if genv.ftgs_AutoTranslate then refreshAllUiTranslations() end
+end)
 
 task.spawn(function()
     while true do
@@ -3368,7 +3821,7 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v6.3] Loaded | " .. Executor)
+print("[NTMT HUB v6.4] Loaded | " .. Executor)
 
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
