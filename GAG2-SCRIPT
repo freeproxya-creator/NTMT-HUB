@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.7 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.7")
+--[[ NTMT HUB - Grow a Garden 2 v6.8 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.8")
 
 pcall(function()
     if delfile and isfile then
@@ -741,7 +741,7 @@ table.sort(GearNames)
 
 PET_LIST = {
     "Monkey", "Bee", "BlackDragon", "GoldenDragonfly", "Unicorn", "Raccoon", "IceSerpent",
-    "Robin", "Deer", "Bunny", "Chicken", "Turtle", "Frog", "GoldenDragon", "Griffin", "Panda",
+    "Robin", "Deer", "Bunny", "Turtle", "Frog", "GoldenDragon", "Owl",
 }
 SPRINKLER_LIST = { "Super Sprinkler", "Legendary Sprinkler", "Rare Sprinkler", "Uncommon Sprinkler", "Common Sprinkler" }
 UI_THEME_NAMES = { "Black", "Pink", "Red", "Green", "Blue", "White", "Gray", "Brown", "Yellow", "Purple" }
@@ -784,12 +784,14 @@ RARITY_RANK = { Secret = 1, Super = 2, Mythic = 3, Legendary = 4, Epic = 5, Rare
 CONFIG_FILE = "ntmthub_gag2_config.json"
 
 movementBypass = false
+fakeLagThreadId = 0
 gardenActionLock = false
 plantingBusy, sprinklerBusy, shovelBusy, stealBusy, dropsBusy, wateringBusy = false, false, false, false, false, false
 sprinkledSpots = {}
 sprinkledPlantKeys = {}
 lastWater = 0
 selectedWaterPlants = { Carrot = true }
+selectedStealFruits = {}
 exceptHarvestPlants = {}
 collectOnlyPlants = {}
 harvestMaxWeight = 0
@@ -837,6 +839,10 @@ genv.ftgs_AutoExecute = false
 genv.ftgs_FakeLag = false
 fakeLagDelay = 0.3
 fakeLagThread = nil
+fakeLagPreConn = nil
+fakeLagPostConn = nil
+fakeLagPendingCF = nil
+fakeLagReplicatedCF = nil
 selectedBgTheme = "None"
 visualMoneyAmount = nil
 privateServerCode = ""
@@ -939,6 +945,7 @@ function saveConfig()
             selectedBgTheme = selectedBgTheme,
             visualMoneyAmount = visualMoneyAmount,
             privateServerCode = privateServerCode,
+            selectedStealFruits = selectedStealFruits,
             scriptUrl = genv.NTMT_SCRIPT_URL or "",
         }))
     end, noopErr)
@@ -975,11 +982,19 @@ function loadConfig()
     if type(data.selectedBgTheme) == "string" then selectedBgTheme = data.selectedBgTheme end
     visualMoneyAmount = tonumber(data.visualMoneyAmount) or visualMoneyAmount
     if type(data.privateServerCode) == "string" then privateServerCode = data.privateServerCode end
+    if type(data.selectedStealFruits) == "table" then
+        table.clear(selectedStealFruits)
+        for k, v in data.selectedStealFruits do
+            if type(v) == "string" then selectedStealFruits[v] = true
+            elseif v then selectedStealFruits[k] = true end
+        end
+    end
     if type(data.scriptUrl) == "string" and data.scriptUrl ~= "" then genv.NTMT_SCRIPT_URL = data.scriptUrl end
     totalPlaySeconds = tonumber(data.totalPlaySeconds) or totalPlaySeconds
     sessionStart = os.time()
 end
 loadConfig()
+task.defer(clearVisualDupes)
 
 
 function getRoot()
@@ -1387,9 +1402,49 @@ end
 
 function shouldDefendPetAt(pos)
     if not genv.ftgs_AutoDefendPet or not pos or not isCatchingPet then return false end
-    local myHrp = getRoot()
-    if not myHrp then return false end
-    return (myHrp.Position - pos).Magnitude <= PET_DEFEND_PLAYER_RANGE
+    return #getPlayersNearPosition(pos, PET_DEFEND_RADIUS) > 0
+end
+
+function hitPlayerWithShovel(targetPlr, shovelTool)
+    if not targetPlr or not targetPlr.Character then return end
+    local hum = getHumanoid()
+    local wasStand = hum and hum.PlatformStand
+    if hum then hum.PlatformStand = false end
+    local shovel, shovelName
+    if shovelTool then
+        shovel = shovelTool
+        shovelName = shovelTool:GetAttribute("Shovel")
+    else
+        shovel, shovelName = findShovelTool()
+    end
+    if not shovel then if hum and wasStand then hum.PlatformStand = true end return end
+    equipTool(shovel)
+    shovel, shovelName = findShovelTool() or findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" })
+    shovelName = shovelName or (shovel and shovel:GetAttribute("Shovel")) or (shovel and shovel.Name)
+    local thrp = targetPlr.Character:FindFirstChild("HumanoidRootPart")
+    if thrp then
+        tpInstant(thrp.Position + (thrp.CFrame.LookVector * -3.5))
+        task.wait(0.05)
+    end
+    shovelClickAttack(shovel)
+    safeNetCall(Net.Shovel and Net.Shovel.HitPlayer, targetPlr.UserId, shovelName, shovel)
+    safeNetCall(Net.Shovel and Net.Shovel.HitPlayer, targetPlr.UserId, shovel)
+    safeNetCall(Net.Actions and Net.Actions.ShovelHit, targetPlr)
+    if hum and wasStand and isCatchingPet then hum.PlatformStand = true end
+end
+
+function attackNearbyIntruders(petPos)
+    if not genv.ftgs_AutoDefendPet or not petPos then return false end
+    local intruders = getPlayersNearPosition(petPos, PET_DEFEND_RADIUS)
+    if #intruders == 0 then return false end
+    local shovel = select(1, findShovelTool()) or select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
+    if not shovel then return false end
+    for _, target in intruders do
+        hitPlayerWithShovel(target, shovel)
+        task.wait(0.04)
+    end
+    if isCatchingPet then stickToPosition(petPos) end
+    return true
 end
 
 function getWildPetPosition(pick)
@@ -1472,43 +1527,6 @@ function shovelClickAttack(shovel)
         end
         task.wait(0.015)
     end
-end
-
-function hitPlayerWithShovel(targetPlr, shovelTool)
-    if not targetPlr or not targetPlr.Character then return end
-    local shovel, shovelName
-    if shovelTool then
-        shovel = shovelTool
-        shovelName = shovelTool:GetAttribute("Shovel")
-    else
-        shovel, shovelName = findShovelTool()
-    end
-    if not shovel then return end
-    equipTool(shovel)
-    shovel, shovelName = findShovelTool() or findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" })
-    shovelName = shovelName or (shovel and shovel:GetAttribute("Shovel")) or shovel.Name
-    local thrp = targetPlr.Character:FindFirstChild("HumanoidRootPart")
-    if thrp then
-        tpInstant(thrp.Position + (thrp.CFrame.LookVector * -4))
-        task.wait(0.03)
-    end
-    shovelClickAttack(shovel)
-    safeNetCall(Net.Shovel and Net.Shovel.HitPlayer, targetPlr.UserId, shovelName, shovel)
-end
-
-function attackNearbyIntruders(petPos)
-    if not genv.ftgs_AutoDefendPet or not petPos then return false end
-    local intruders = getPlayersNearPosition(petPos, PET_DEFEND_RADIUS)
-    if #intruders == 0 then return false end
-    local shovel = select(1, findShovelTool()) or select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
-    if not shovel then return false end
-    equipTool(shovel)
-    updateDefendHitboxes(petPos)
-    for _, target in intruders do
-        hitPlayerWithShovel(target, shovel)
-    end
-    if isCatchingPet or collectingMutation then stickToPosition(petPos) end
-    return true
 end
 
 function getFruitWeightKg(fruitData)
@@ -1596,8 +1614,22 @@ function isInGardenActionRange()
     return savedPlotCenter ~= nil and isWithinPlot(GARDEN_REMOTE_MARGIN)
 end
 
+function isPosInsidePlot(pos, inset)
+    refreshOwnerPlot()
+    if not savedPlotCenter or not pos then return false end
+    inset = inset or 1.5
+    local hx = (savedPlotSize and savedPlotSize.X or 44) / 2 - inset
+    local hz = (savedPlotSize and savedPlotSize.Z or 44) / 2 - inset
+    return math.abs(pos.X - savedPlotCenter.X) <= hx
+        and math.abs(pos.Z - savedPlotCenter.Z) <= hz
+end
+
 function briefTpForAction(pos)
     if not pos then return false end
+    if not isPosInsidePlot(pos, 1) then
+        pos = findPlantAreaPosition(pos) or pos
+        if not isPosInsidePlot(pos, 1) then return false end
+    end
     local hrp = getRoot()
     if not hrp then return false end
     hrp.AssemblyLinearVelocity = Vector3.zero
@@ -1914,6 +1946,7 @@ function findNearestEmptySpotOnPlot()
     local occupied = getOccupiedPlantPositions()
     local best, bestEdge
     for _, pos in plantAreas do
+        if not isPosInsidePlot(pos, 1.5) then continue end
         if not isSpotEmpty(pos, occupied) then continue end
         if isNearPlotCenter(pos) then continue end
         local edge = savedPlotCenter and flatDistXZ(pos, savedPlotCenter) or 0
@@ -1921,13 +1954,7 @@ function findNearestEmptySpotOnPlot()
             best, bestEdge = pos, edge
         end
     end
-    if best then return findPlantAreaPosition(best) or best end
-    for _, pos in plantAreas do
-        if isSpotEmpty(pos, occupied) and not isNearPlotCenter(pos) then
-            return findPlantAreaPosition(pos) or pos
-        end
-    end
-    return nil
+    return best
 end
 
 function findEmptyGardenSpotNearPlayer()
@@ -2121,12 +2148,15 @@ function tryAutoPlant()
     local seedName, tool = pickNextPlantSeed()
     if not tool then return end
     local pos = findNearestEmptySpotOnPlot()
-    if not pos then return end
+    if not pos or not isPosInsidePlot(pos, 1) then return end
     lastPlant = os.clock()
     plantingBusy = true
     task.spawn(function()
         movementBypass = true
-        briefTpForAction(pos)
+        if not isNearPlotForActions() then
+            if not briefTpForAction(pos) then plantingBusy = false movementBypass = false return end
+            task.wait(0.06)
+        end
         equipTool(tool)
         tool = findSeedToolByName(seedName) or tool
         safeNetCall(Net.Plant and Net.Plant.PlantSeed, pos, seedName, tool)
@@ -2309,11 +2339,31 @@ function plotUnlocked(player)
 end
 
 function calculateStealValue(fruit)
-    local name = fruit:GetAttribute("CorePartName") or fruit:GetAttribute("PlantName")
+    local name = getFruitStealName(fruit)
     local size = fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("Age")
     local mut = fruit:GetAttribute("Mutation")
     local ok, val = xpcall(FruitValueCalc, noopErr, name, size, mut, LocalPlayer, 1)
     return ok and val or 0
+end
+
+function getFruitStealName(fruit)
+    if not fruit then return nil end
+    return fruit:GetAttribute("CorePartName")
+        or fruit:GetAttribute("PlantName")
+        or fruit:GetAttribute("FruitName")
+        or fruit.Name
+end
+
+function fruitMatchesStealFilter(fruit)
+    if not setHasAny(selectedStealFruits) then return true end
+    local name = getFruitStealName(fruit)
+    if not name then return false end
+    for sel in selectedStealFruits do
+        if seedNamesMatch(name, sel) then return true end
+        local ln, ls = string.lower(name), string.lower(sel)
+        if ln:find(ls, 1, true) or ls:find(ln, 1, true) then return true end
+    end
+    return false
 end
 
 function getPlotCenterPos(plot)
@@ -2332,7 +2382,7 @@ function getStealableFruitsOnPlot(plot, limit)
         local fruits = plant:FindFirstChild("Fruits")
         local scan = fruits and fruits:GetChildren() or { plant }
         for _, fr in scan do
-            if getStealPrompt(fr) then
+            if getStealPrompt(fr) and fruitMatchesStealFilter(fr) then
                 list[#list + 1] = { fruit = fr, value = calculateStealValue(fr) }
             end
         end
@@ -2341,6 +2391,25 @@ function getStealableFruitsOnPlot(plot, limit)
     local out = {}
     for i = 1, math.min(limit or STEAL_BATCH, #list) do out[#out + 1] = list[i].fruit end
     return out
+end
+
+function getBestStealableFruitOnPlot(plot)
+    local list = {}
+    if not plot then return nil end
+    local plants = plot:FindFirstChild("Plants")
+    if not plants then return nil end
+    for _, plant in plants:GetChildren() do
+        local fruits = plant:FindFirstChild("Fruits")
+        local scan = fruits and fruits:GetChildren() or { plant }
+        for _, fr in scan do
+            if getStealPrompt(fr) and fruitMatchesStealFilter(fr) then
+                list[#list + 1] = { fruit = fr, value = calculateStealValue(fr) }
+            end
+        end
+    end
+    if #list == 0 then return nil end
+    table.sort(list, function(a, b) return a.value > b.value end)
+    return list[1]
 end
 
 function getPlotStealOwner(plot)
@@ -2354,9 +2423,7 @@ end
 function isPlotStealable(plot)
     if not plot then return false end
     local owner, uid = getPlotStealOwner(plot)
-    if owner == LocalPlayer then return false end
-    if owner and not plotUnlocked(owner) then return false end
-    return true
+    return owner == nil and uid == 0
 end
 
 function collectAllStealTargets()
@@ -2364,24 +2431,19 @@ function collectAllStealTargets()
     if not Gardens then return targets end
     for _, plot in Gardens:GetChildren() do
         if not isPlotStealable(plot) then continue end
-        local owner, uid = getPlotStealOwner(plot)
-        local unowned = owner == nil and uid == 0
-        local fruits = getStealableFruitsOnPlot(plot, 50)
-        for _, fruit in fruits do
+        local best = getBestStealableFruitOnPlot(plot)
+        if best then
             targets[#targets + 1] = {
-                fruit = fruit,
+                fruit = best.fruit,
                 plot = plot,
-                owner = owner,
-                ownerUserId = uid,
-                unowned = unowned,
-                value = calculateStealValue(fruit),
+                owner = nil,
+                ownerUserId = 0,
+                unowned = true,
+                value = best.value,
             }
         end
     end
-    table.sort(targets, function(a, b)
-        if a.unowned ~= b.unowned then return a.unowned end
-        return a.value > b.value
-    end)
+    table.sort(targets, function(a, b) return a.value > b.value end)
     return targets
 end
 
@@ -2448,10 +2510,9 @@ function stealFruit(fruit, ownerUserId, sessionId)
     if not fruit or not fruit.Parent then return false end
     local stealPos, uid, plantId, fruitId = resolveStealTarget(fruit, ownerUserId)
     if not stealPos or not plantId then return false end
-    if not uid or uid == 0 then
-        uid = tonumber(fruit:GetAttribute("UserId")) or tonumber(fruit:GetAttribute("OwnerUserId"))
+    if uid == nil then
+        uid = tonumber(fruit:GetAttribute("UserId")) or tonumber(fruit:GetAttribute("OwnerUserId")) or 0
     end
-    if not uid or uid == 0 then return false end
 
     local fruitCountBefore = getFruitCount()
     movementBypass = true
@@ -2462,7 +2523,7 @@ function stealFruit(fruit, ownerUserId, sessionId)
         if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then break end
         if isStealComplete(fruit, fruitCountBefore) then break end
         if not fruit.Parent then break end
-        briefTpForAction(stealPos)
+        tpInstant(stealPos)
         local prompt = getStealPrompt(fruit)
         if prompt then fireProximityPrompt(prompt) end
         safeNetCall(Net.Steal and Net.Steal.BeginSteal, uid, plantId, fruitId)
@@ -2496,10 +2557,7 @@ function tryAutoSteal()
         for _, t in ipairs(targets) do
             if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then break end
             if stolen >= STEAL_BATCH or isInventoryFull() then break end
-            if t.owner and not plotUnlocked(t.owner) then continue end
-            local uid = t.ownerUserId
-            if t.owner then uid = t.owner.UserId end
-            if stealFruit(t.fruit, uid, sessionId) then stolen += 1 end
+            if stealFruit(t.fruit, t.ownerUserId or 0, sessionId) then stolen += 1 end
             if stolen >= STEAL_BATCH then break end
             task.wait(0.03)
         end
@@ -2583,10 +2641,13 @@ function tryBuyPet()
             if pos then
                 activeDefendPetPos = pos
                 stickToPosition(pos)
-                if shouldDefendPetAt(pos) then attackNearbyIntruders(pos) end
+                if shouldDefendPetAt(pos) then
+                    attackNearbyIntruders(pos)
+                    task.wait(0.02)
+                end
             end
             doTame()
-            task.wait(0.012)
+            task.wait(0.008)
         end
         restoreAllHitboxes()
         activeDefendPetPos = nil
@@ -2660,12 +2721,61 @@ function hopToRandomServer()
 end
 
 function joinPrivateServer(code)
-    code = tostring(code or privateServerCode or ""):gsub("%s+", "")
+    code = parsePrivateServerCode(code)
     if code == "" then return false end
+    privateServerCode = code
+    saveConfig()
     local ok = xpcall(function()
         Services.TeleportService:TeleportToPrivateServer(game.PlaceId, code, { LocalPlayer })
     end, noopErr)
     return ok
+end
+
+function parsePrivateServerCode(input)
+    input = tostring(input or privateServerCode or ""):gsub("%s+", "")
+    if input == "" then return "" end
+    local fromLink = input:match("[?&]privateServerLinkCode=([%w%-]+)")
+        or input:match("[?&]code=([%w%-]+)")
+        or input:match("PrivateServerId=([%w%-]+)")
+    return fromLink or input
+end
+
+function getOwnPrivateServerCode()
+    local data = PlayerReplica and PlayerReplica.Data
+    if type(data) == "table" then
+        for _, key in { "PrivateServerCode", "VipServerCode", "PrivateServerId", "VipLinkCode", "VipServerId" } do
+            local v = data[key]
+            if type(v) == "string" and v ~= "" then return v end
+        end
+    end
+    local ok, resp = xpcall(function()
+        return Services.HttpService:JSONDecode(universalHttpGet(
+            "https://games.roblox.com/v1/users/" .. LocalPlayer.UserId .. "/games/" .. game.GameId .. "/private-servers?limit=10"
+        ))
+    end, noopErr)
+    if ok and type(resp) == "table" and type(resp.data) == "table" and resp.data[1] then
+        return resp.data[1].vipServerId or resp.data[1].accessCode
+    end
+    return nil
+end
+
+function smartJoinPrivateServer()
+    local pasted = parsePrivateServerCode(privateServerCode)
+    if pasted ~= "" then
+        if joinPrivateServer(pasted) then
+            hubNotify("Private", "Joining pasted VIP server...")
+            return
+        end
+        hubNotify("Private", "Join failed — check code/link")
+        return
+    end
+    local own = getOwnPrivateServerCode()
+    if own then
+        joinPrivateServer(own)
+        hubNotify("Private", "Joining your private server...")
+        return
+    end
+    hubNotify("Private", "No VIP server on this account — create one on Roblox game page → Private Servers")
 end
 
 function hopPrivateServerAuto()
@@ -2802,6 +2912,27 @@ function applyVisualMoney()
     local s = ls and ls:FindFirstChild("Sheckles")
     if s then s.Value = visualMoneyAmount end
     if PlayerReplica and PlayerReplica.Data then PlayerReplica.Data.Sheckles = visualMoneyAmount end
+end
+
+function clearVisualDupes()
+    local inv = PlayerReplica and PlayerReplica.Data and PlayerReplica.Data.Inventory
+    if type(inv) == "table" and type(inv.Pets) == "table" then
+        for id, _ in inv.Pets do
+            if type(id) == "string" and string.sub(id, 1, 5) == "NTMT_" then
+                inv.Pets[id] = nil
+            end
+        end
+    end
+    local function stripDupes(container)
+        if not container then return end
+        for _, t in container:GetChildren() do
+            if t:IsA("Tool") and string.find(t.Name, "%(Dupe%)$") then
+                t:Destroy()
+            end
+        end
+    end
+    stripDupes(LocalPlayer:FindFirstChild("Backpack"))
+    stripDupes(LocalPlayer.Character)
 end
 
 function visualDupeHeldItem()
@@ -3027,6 +3158,17 @@ function rescanHubUiTextRegistry()
     end
 end
 
+function restoreAllUiText()
+    rescanHubUiTextRegistry()
+    for inst, data in translationRegistry do
+        if inst and inst.Parent and isHubUiInstance(inst) then
+            data.translating = true
+            inst.Text = data.original or ""
+            data.translating = false
+        end
+    end
+end
+
 function registerUiTextInstance(inst)
     if not inst or (not inst:IsA("TextLabel") and not inst:IsA("TextButton") and not inst:IsA("TextBox")) then return end
     if not isHubUiInstance(inst) then return end
@@ -3048,16 +3190,10 @@ function applyUiLanguage(langName)
     if translateBusy then return end
     translateBusy = true
     task.spawn(function()
+        restoreAllUiText()
         rescanHubUiTextRegistry()
         local code = TRANSLATE_LANG_CODES[translateLanguage] or "en"
         if code == "en" then
-            for inst, data in translationRegistry do
-                if inst and inst.Parent and isHubUiInstance(inst) then
-                    data.translating = true
-                    inst.Text = data.original
-                    data.translating = false
-                end
-            end
             translateBusy = false
             hubNotify("Translate", "English restored")
             return
@@ -3189,22 +3325,44 @@ function applyHubBackgroundImage(themeName)
     hubNotify("Theme", selectedBgTheme)
 end
 
+function stopFakeLag()
+    fakeLagThreadId += 1
+    if fakeLagPreConn then fakeLagPreConn:Disconnect() fakeLagPreConn = nil end
+    if fakeLagPostConn then fakeLagPostConn:Disconnect() fakeLagPostConn = nil end
+    fakeLagPendingCF = nil
+    fakeLagReplicatedCF = nil
+end
+
 function setFakeLag(on, delay)
     genv.ftgs_FakeLag = on == true
     if delay ~= nil then fakeLagDelay = math.max(0.05, tonumber(delay) or fakeLagDelay or 0.3) end
     saveConfig()
+    stopFakeLag()
     if not genv.ftgs_FakeLag then return end
+    local tid = fakeLagThreadId
     task.spawn(function()
-        while genv.ftgs_FakeLag do
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                hrp.Anchored = true
-                task.wait(fakeLagDelay)
-                if hrp.Parent then hrp.Anchored = false end
-            end
-            task.wait(0.05)
+        while genv.ftgs_FakeLag and tid == fakeLagThreadId do
+            task.wait(fakeLagDelay)
+            if fakeLagPendingCF then fakeLagReplicatedCF = fakeLagPendingCF end
         end
+    end)
+    fakeLagPostConn = Services.RunService.Heartbeat:Connect(function()
+        if not genv.ftgs_FakeLag or movementBypass or gardenActionLock or stealBusy or isCatchingPet then return end
+        local hrp = getRoot()
+        if not hrp then return end
+        fakeLagPendingCF = hrp.CFrame
+        if fakeLagReplicatedCF then
+            hrp.CFrame = fakeLagReplicatedCF
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+        else
+            fakeLagReplicatedCF = hrp.CFrame
+        end
+    end)
+    fakeLagPreConn = Services.RunService.PreRender:Connect(function()
+        if not genv.ftgs_FakeLag or movementBypass or gardenActionLock or stealBusy or isCatchingPet then return end
+        local hrp = getRoot()
+        if hrp and fakeLagPendingCF then hrp.CFrame = fakeLagPendingCF end
     end)
 end
 
@@ -3422,39 +3580,40 @@ end
 
 function applyMovementBypass(dt)
     if not genv.ftgs_BypassMovement then return end
-    if movementBypass or gardenActionLock or isCatchingPet or stealBusy or collectingMutation then return end
+    if genv.ftgs_FakeLag or movementBypass or gardenActionLock or isCatchingPet or stealBusy or collectingMutation then return end
     local hum = getHumanoid()
     local hrp = getRoot()
     if not hum or not hrp then return end
-    dt = dt or 0.016
+    dt = math.clamp(dt or 0.016, 0.001, 0.05)
     applyMovement()
     local dir = hum.MoveDirection
-    if dir.Magnitude > 0.05 then
-        local flat = Vector3.new(dir.X, 0, dir.Z)
-        if flat.Magnitude > 0.01 then
-            flat = flat.Unit
-            local speed = desiredWalkSpeed
-            local vel = Vector3.new(flat.X * speed, hrp.AssemblyLinearVelocity.Y, flat.Z * speed)
-            hrp.AssemblyLinearVelocity = vel
-            pcall(function() hrp.Velocity = vel end)
-            if lastClientMovePos then
-                local snapBack = (hrp.Position - lastClientMovePos).Magnitude
-                if snapBack > 5 and dir.Magnitude > 0.08 then
-                    local push = hrp.CFrame.Position + flat * speed * dt * 3
-                    hrp.CFrame = CFrame.new(push + Vector3.new(0, 0.2, 0))
-                    hrp.AssemblyLinearVelocity = vel
-                    pcall(function() hrp.Velocity = vel end)
-                end
-            end
-            lastClientMovePos = hrp.Position
-            lastKnownMoveCF = hrp.CFrame
-        end
-    else
+    if dir.Magnitude <= 0.05 then
         lastClientMovePos = hrp.Position
         lastKnownMoveCF = hrp.CFrame
-        hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
-        hrp.AssemblyAngularVelocity = Vector3.zero
+        return
     end
+    local flat = Vector3.new(dir.X, 0, dir.Z)
+    if flat.Magnitude <= 0.01 then return end
+    flat = flat.Unit
+    local speed = desiredWalkSpeed
+    local step = speed * dt
+    local targetPos = hrp.Position + flat * step
+    local vel = Vector3.new(flat.X * speed, hrp.AssemblyLinearVelocity.Y, flat.Z * speed)
+    hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 0.05, 0), targetPos + flat)
+    hrp.AssemblyLinearVelocity = vel
+    hrp.AssemblyAngularVelocity = Vector3.zero
+    pcall(function() hrp.Velocity = vel end)
+    if lastClientMovePos then
+        local snapBack = (hrp.Position - lastClientMovePos).Magnitude
+        if snapBack > 14 then
+            local push = lastClientMovePos + flat * step * 2.5
+            hrp.CFrame = CFrame.new(push + Vector3.new(0, 0.05, 0), push + flat)
+            hrp.AssemblyLinearVelocity = vel
+            pcall(function() hrp.Velocity = vel end)
+        end
+    end
+    lastClientMovePos = hrp.Position
+    lastKnownMoveCF = hrp.CFrame
 end
 
 function setupAntiKnockbackChar(char)
@@ -3898,7 +4057,7 @@ Window = WindUI:CreateWindow({
 })
 markHubScreenGuis()
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.7", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.8", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
 task.defer(function()
@@ -3969,9 +4128,13 @@ MainTab:Input({ Title = "Mail message", Value = mailMessage, Placeholder = "mess
 end })
 
 AutoTab = Window:Tab({ Title = "Automation", Icon = "bot" })
-AutoTab:Toggle({ Title = "Auto Steal", Desc = "Fast steal 3 -> garden -> next (off = stop instantly)", Default = genv.ftgs_AutoSteal or false, Callback = function(s)
+AutoTab:Toggle({ Title = "Auto Steal", Desc = "Unowned plots only — best fruit per plot", Default = genv.ftgs_AutoSteal or false, Callback = function(s)
     genv.ftgs_AutoSteal = s
     if not s then cancelStealAction() end
+end })
+AutoTab:Dropdown({ Title = "Select Steal Fruits", Values = SeedNames, Multi = true, AllowNone = true, Callback = function(sel)
+    parseMultiSelect(sel, selectedStealFruits)
+    saveConfig()
 end })
 makeToggle(AutoTab, "Auto Collect Drops", "TP nearest drop + pickup", "ftgs_AutoCollectDrops")
 makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Stick spawn + fast claim until gone", "ftgs_AutoCollectMutation")
@@ -4008,12 +4171,12 @@ gearShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Load
 ServerTab = Window:Tab({ Title = "Server Hop", Icon = "globe" })
 makeToggle(ServerTab, "Auto Hop Server", "Hop every 15s (skip same server)", "ftgs_AutoHop")
 makeToggle(ServerTab, "Auto Join Private", "Try VIP/private servers", "ftgs_AutoJoinPrivate")
-ServerTab:Input({ Title = "Private Server Code", Value = privateServerCode, Placeholder = "paste VIP access code", Callback = function(v)
+ServerTab:Input({ Title = "Private Server Code / Link", Value = privateServerCode, Placeholder = "paste VIP code or roblox private link", Callback = function(v)
     privateServerCode = v or ""
     saveConfig()
 end })
-ServerTab:Button({ Title = "Join Private Server", Icon = "key", Callback = function()
-    if joinPrivateServer(privateServerCode) then hubNotify("Private", "Joining...") else hubNotify("Private", "Paste code first") end
+ServerTab:Button({ Title = "Join Private Server (1 click)", Icon = "key", Callback = function()
+    smartJoinPrivateServer()
 end })
 ServerTab:Button({ Title = "Hop Server (1 click)", Icon = "shuffle", Callback = function() hopToRandomServer() end })
 ServerTab:Button({ Title = "Rejoin Server", Icon = "refresh-cw", Callback = function()
@@ -4106,7 +4269,7 @@ SettingsTab:Input({ Title = "Fake Lag delay (sec)", Value = tostring(fakeLagDela
     fakeLagDelay = math.max(0.05, tonumber(v) or fakeLagDelay)
     saveConfig()
 end })
-SettingsTab:Toggle({ Title = "Fake Lag", Desc = "Anchor HRP on/off loop", Default = genv.ftgs_FakeLag or false, Callback = function(s)
+SettingsTab:Toggle({ Title = "Fake Lag", Desc = "Others see your position delayed (local moves normal)", Default = genv.ftgs_FakeLag or false, Callback = function(s)
     setFakeLag(s, fakeLagDelay)
 end })
 
@@ -4248,46 +4411,6 @@ Services.RunService.RenderStepped:Connect(function(dt)
 end)
 
 task.spawn(function()
-    Services.RunService.Heartbeat:Connect(function()
-        if not genv.ftgs_BypassMovement then return end
-        if movementBypass or gardenActionLock or stealBusy or isCatchingPet then return end
-        local hrp = getRoot()
-        local hum = getHumanoid()
-        if not hrp or not hum then return end
-        if hum.MoveDirection.Magnitude > 0.05 or desiredWalkSpeed > 16 then
-            lastKnownMoveCF = hrp.CFrame
-        end
-    end)
-end)
-
-task.spawn(function()
-    while true do
-        if genv.ftgs_BypassMovement and not movementBypass and not gardenActionLock and not isCatchingPet and not stealBusy then
-            local hrp = getRoot()
-            local hum = getHumanoid()
-            if hrp and hum and lastKnownMoveCF and hum.MoveDirection.Magnitude > 0.08 then
-                local snap = (hrp.Position - lastKnownMoveCF.Position).Magnitude
-                if snap > 8 then
-                    local dir = hum.MoveDirection
-                    if dir.Magnitude > 0.05 then
-                        local flat = Vector3.new(dir.X, 0, dir.Z).Unit
-                        local push = lastKnownMoveCF.Position + flat * desiredWalkSpeed * 0.05
-                        hrp.CFrame = CFrame.new(push + Vector3.new(0, 3, 0))
-                    else
-                        hrp.CFrame = lastKnownMoveCF
-                    end
-                    local vel = Vector3.new(dir.X * desiredWalkSpeed, hrp.AssemblyLinearVelocity.Y, dir.Z * desiredWalkSpeed)
-                    hrp.AssemblyLinearVelocity = vel
-                    hrp.AssemblyAngularVelocity = Vector3.zero
-                    pcall(function() hrp.Velocity = vel end)
-                end
-            end
-        end
-        task.wait(0.02)
-    end
-end)
-
-task.spawn(function()
     while true do
         if genv.ftgs_AntiStealGuard and not gardenActionLock and not stealBusy then safeLoop(tryAntiStealGuard) end
         task.wait(0.05)
@@ -4364,7 +4487,7 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v6.7] Loaded | " .. Executor)
+print("[NTMT HUB v6.8] Loaded | " .. Executor)
 
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
