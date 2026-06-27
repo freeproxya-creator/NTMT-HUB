@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.2 | made by nguoitinhmuathu | Delta-safe ]]
-print("[NTMT HUB] BOOT v6.2")
+--[[ NTMT HUB - Grow a Garden 2 v6.3 | made by nguoitinhmuathu | Delta-safe ]]
+print("[NTMT HUB] BOOT v6.3")
 
 local genv = _G
 if type(getgenv) == "function" then
@@ -82,19 +82,12 @@ local function setStep(step)
     print("[NTMT HUB]", step)
 end
 
-local function isDeltaExecutor()
-    return string.find(string.lower(Executor), "delta", 1, true) ~= nil
-end
-
 local function preferBuiltinUI()
-    if genv.NTMT_USE_BUILTIN_UI == true then return true end
-    if genv.NTMT_USE_BUILTIN_UI == false then return false end
-    return isDeltaExecutor()
+    if genv.NTMT_USE_WINDUI == true then return false end
+    return true
 end
 
-if isDeltaExecutor() then
-    print("[NTMT HUB] Delta executor — built-in UI only (no WindUI)")
-end
+print("[NTMT HUB] UI mode: built-in (WindUI off — set getgenv().NTMT_USE_WINDUI=true to enable)")
 local hubDefer = (task and type(task.defer) == "function" and task.defer)
     or (type(spawn) == "function" and spawn)
     or function(fn) if type(fn) == "function" then fn() end end
@@ -288,7 +281,8 @@ end
 local function safeNetCall(remote, ...)
     if not remote or type(remote.Fire) ~= "function" then return false end
     local args = { ... }
-    return select(1, xpcall(function() remote:Fire(table.unpack(args)) end, noopErr))
+    local unpackFn = table.unpack or unpack
+    return select(1, xpcall(function() remote:Fire(unpackFn(args)) end, noopErr))
 end
 
 local function safeFlagGet(flagObj)
@@ -344,7 +338,15 @@ local function createFallbackUI()
         local ok, core = pcall(function() return game:GetService("CoreGui") end)
         if ok and core then return core end
         local lp = game:GetService("Players").LocalPlayer
-        return (lp and lp:FindFirstChild("PlayerGui")) or game:GetService("CoreGui")
+        if lp then
+            local pg = lp:FindFirstChild("PlayerGui")
+            if not pg then
+                local wok, waited = pcall(function() return lp:WaitForChild("PlayerGui", 8) end)
+                if wok then pg = waited end
+            end
+            if pg then return pg end
+        end
+        return nil
     end
 
     function UI:Notify(cfg)
@@ -372,6 +374,13 @@ local function createFallbackUI()
             if type(protect_gui) == "function" then protect_gui(gui) end
         end)
         local parent = guiParent()
+        if not parent then
+            for _ = 1, 24 do
+                task.wait(0.25)
+                parent = guiParent()
+                if parent then break end
+            end
+        end
         if not parent then
             hubWarn("No GUI parent — aborting built-in UI")
             return nil
@@ -677,10 +686,11 @@ local function loadWindUI()
             end
         end
         WindUI = createFallbackUI()
-        print("[NTMT HUB] Built-in UI ready (" .. Executor .. ")")
+        print("[NTMT HUB] Built-in UI ready | " .. Executor)
         return true
     end
 
+    -- WindUI only when getgenv().NTMT_USE_WINDUI == true
     cleanupBrokenGetIcons()
     purgeOldWindUICache()
     if type(loadstring) ~= "function" and type(load) ~= "function" then
@@ -2569,6 +2579,38 @@ end
 
 -- ===== WINDUI =====
 
+local function dummyParagraph()
+    return { SetDesc = function() end, SetTitle = function() end }
+end
+
+local function dummyTab()
+    local tab = {}
+    local function noop() return tab end
+    tab.Section = noop
+    tab.Toggle = noop
+    tab.Button = noop
+    tab.Input = noop
+    tab.Slider = noop
+    tab.Dropdown = noop
+    tab.Paragraph = function() return dummyParagraph() end
+    return tab
+end
+
+local function safeTab(cfg)
+    if not Window or type(Window.Tab) ~= "function" then return dummyTab() end
+    local ok, tab = xpcall(function() return Window:Tab(cfg) end, noopErr)
+    if ok and tab then return tab end
+    return dummyTab()
+end
+
+local function tabCall(tab, method, ...)
+    if not tab or type(tab[method]) ~= "function" then return nil end
+    local args = { ... }
+    local unpackFn = table.unpack or unpack
+    local ok, res = xpcall(function() return tab[method](tab, unpackFn(args)) end, noopErr)
+    return ok and res or nil
+end
+
 setStep("M10 CreateWindow")
 publishWindUIGlobals()
 local Window
@@ -2579,46 +2621,32 @@ do
         Folder = "ntmthub",
         OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
     }
-    if not preferBuiltinUI() then
-        windowCfg.Icon = "sprout"
-        windowCfg.NewElements = true
-    end
     local winOk, winOrErr = xpcall(function()
         return WindUI:CreateWindow(windowCfg)
     end, noopErr)
     if winOk and winOrErr then
         Window = winOrErr
     else
-        hubWarn("CreateWindow failed — built-in UI:", tostring(winOrErr))
+        hubWarn("CreateWindow failed:", tostring(winOrErr))
         WindUI = createFallbackUI()
-        Window = WindUI:CreateWindow({
-            Title = "NTMT HUB | Grow a Garden 2",
-            Author = MADE_BY .. " | " .. Executor,
-            Folder = "ntmthub",
-            OpenButton = { Title = "NTMT HUB", Enabled = true },
-        })
+        local ok2, win2 = xpcall(function()
+            return WindUI:CreateWindow({
+                Title = "NTMT HUB | Grow a Garden 2",
+                Author = MADE_BY .. " | " .. Executor,
+                Folder = "ntmthub",
+                OpenButton = { Title = "NTMT HUB", Enabled = true },
+            })
+        end, noopErr)
+        Window = ok2 and win2 or nil
     end
 end
-if not Window then
-    hubWarn("UI window is nil — abort")
-    return
+if not Window or type(Window.Tab) ~= "function" then
+    hubWarn("UI failed — auto features still run (rejoin + re-execute if no button)")
+    Window = { Tab = function() return dummyTab() end, Tag = function() end }
 end
 setStep("M11 building tabs")
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.2", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
-end
-if not Window or type(Window.Tab) ~= "function" then
-    hubWarn("Window invalid — abort")
-    return
-end
-
-local function safeTab(cfg)
-    local ok, tab = xpcall(function() return Window:Tab(cfg) end, noopErr)
-    return ok and tab or nil
-end
-
-local function safeUi(fn)
-    xpcall(fn, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.3", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 
 applyUITheme(selectedUITheme)
@@ -2639,8 +2667,12 @@ local function multiDropdown(tab, title, values, selected, allowNone)
     })
 end
 
+local seedShopLive = dummyParagraph()
+local gearShopLive = dummyParagraph()
+local activePara = dummyParagraph()
+
+local tabsOk, tabsErr = xpcall(function()
 local MainTab = safeTab({ Title = "Main", Icon = "home" })
-if not MainTab then hubWarn("Main tab failed") return end
 MainTab:Section({ Title = "Farm" })
 makeToggle(MainTab, "Auto Harvest", "Collect ripe fruit with filters", "ftgs_AutoHarvest")
 MainTab:Input({ Title = "Max harvest weight (kg)", Value = tostring(harvestMaxWeight), Placeholder = "0 = off, 100 = under 100kg", Callback = function(v)
@@ -2698,7 +2730,7 @@ multiDropdown(AutoTab, "Select Pets", PET_LIST, selectedPets, false)
 local ShopTab = safeTab({ Title = "Shop", Icon = "shopping-cart" })
 makeToggle(ShopTab, "Auto Buy Seed", "Fast seed buy", "ftgs_AutoBuySeed")
 makeToggle(ShopTab, "Auto Buy All Seed", "Buy all in stock", "ftgs_AutoBuyAllSeed")
-ShopTab:Dropdown({ Title = "Select Seeds", Values = PlantSeedNames, Multi = true, AllowNone = true, Callback = function(sel)
+tabCall(ShopTab, "Dropdown", { Title = "Select Seeds", Values = PlantSeedNames, Multi = true, AllowNone = true, Callback = function(sel)
     table.clear(selectedBuySeeds)
     if type(sel) == "table" then for k, v in pairs(sel) do
         if type(v) == "string" then selectedBuySeeds[v] = true elseif type(k) == "string" and v then selectedBuySeeds[k] = true end
@@ -2706,30 +2738,30 @@ ShopTab:Dropdown({ Title = "Select Seeds", Values = PlantSeedNames, Multi = true
 end })
 makeToggle(ShopTab, "Auto Buy Gear", "Fast gear buy", "ftgs_AutoBuyGear")
 makeToggle(ShopTab, "Auto Buy All Gear", "Buy all in stock", "ftgs_AutoBuyAllGear")
-ShopTab:Dropdown({ Title = "Select Gears", Values = GearNames, Multi = true, AllowNone = true, Callback = function(sel)
+tabCall(ShopTab, "Dropdown", { Title = "Select Gears", Values = GearNames, Multi = true, AllowNone = true, Callback = function(sel)
     table.clear(selectedBuyGears)
     if type(sel) == "table" then for k, v in pairs(sel) do
         if type(v) == "string" then selectedBuyGears[v] = true elseif type(k) == "string" and v then selectedBuyGears[k] = true end
     end end
 end })
-ShopTab:Section({ Title = "Seed Shop (live)" })
-local seedShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
-ShopTab:Section({ Title = "Gear Shop (live)" })
-local gearShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
+tabCall(ShopTab, "Section", { Title = "Seed Shop (live)" })
+seedShopLive = tabCall(ShopTab, "Paragraph", { Title = "name | amount | price", Desc = "Loading..." }) or dummyParagraph()
+tabCall(ShopTab, "Section", { Title = "Gear Shop (live)" })
+gearShopLive = tabCall(ShopTab, "Paragraph", { Title = "name | amount | price", Desc = "Loading..." }) or dummyParagraph()
 
 local ServerTab = safeTab({ Title = "Server Hop", Icon = "globe" })
 makeToggle(ServerTab, "Auto Hop Server", "Hop every 30s", "ftgs_AutoHop")
-ServerTab:Button({ Title = "Hop Server (1 click)", Icon = "shuffle", Callback = function() hopToRandomServer() end })
-ServerTab:Button({ Title = "Rejoin Server", Icon = "refresh-cw", Callback = function()
+tabCall(ServerTab, "Button", { Title = "Hop Server (1 click)", Icon = "shuffle", Callback = function() hopToRandomServer() end })
+tabCall(ServerTab, "Button", { Title = "Rejoin Server", Icon = "refresh-cw", Callback = function()
     Services.TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
 end })
-ServerTab:Input({ Title = "Job ID", Value = "", Placeholder = "paste job id", Callback = function(v) inputJobId = v or "" end })
-ServerTab:Button({ Title = "Join Job ID (1 click)", Icon = "log-in", Callback = function()
+tabCall(ServerTab, "Input", { Title = "Job ID", Value = "", Placeholder = "paste job id", Callback = function(v) inputJobId = v or "" end })
+tabCall(ServerTab, "Button", { Title = "Join Job ID (1 click)", Icon = "log-in", Callback = function()
     if inputJobId ~= "" then Services.TeleportService:TeleportToPlaceInstance(game.PlaceId, inputJobId, LocalPlayer) end
 end })
-ServerTab:Section({ Title = "Auto Pet Finder" })
+tabCall(ServerTab, "Section", { Title = "Auto Pet Finder" })
 makeToggle(ServerTab, "Auto Find Pet", "Scan server first, then hop", "ftgs_AutoFindPet")
-ServerTab:Dropdown({ Title = "Pet to Find", Values = PET_LIST, Value = selectedFindPet, Callback = function(v)
+tabCall(ServerTab, "Dropdown", { Title = "Pet to Find", Values = PET_LIST, Value = selectedFindPet, Callback = function(v)
     if type(v) == "table" then v = v[1] end
     selectedFindPet = v or selectedFindPet
 end })
@@ -2772,8 +2804,12 @@ InfoTab:Button({ Title = "Copy Discord Link", Icon = "copy", Callback = function
 end })
 InfoTab:Paragraph({ Title = "Executor", Desc = Executor })
 InfoTab:Paragraph({ Title = "Roblox User", Desc = LocalPlayer.Name })
-local activePara = InfoTab:Paragraph({ Title = "Active", Desc = "0h 00m 00s" })
-InfoTab:Paragraph({ Title = "Made by", Desc = MADE_BY })
+activePara = tabCall(InfoTab, "Paragraph", { Title = "Active", Desc = "0h 00m 00s" }) or dummyParagraph()
+tabCall(InfoTab, "Paragraph", { Title = "Made by", Desc = MADE_BY })
+
+setStep("M12 tabs done")
+end, noopErr)
+if not tabsOk then hubWarn("Tab build error:", tostring(tabsErr)) end
 
 -- ===== LOOPS =====
 
@@ -2965,7 +3001,7 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v6.2] Loaded | " .. Executor)
+print("[NTMT HUB v6.3] Loaded | " .. Executor)
 setStep("M99 loaded OK")
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
