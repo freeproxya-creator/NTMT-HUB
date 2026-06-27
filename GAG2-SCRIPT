@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.1 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.1")
+--[[ NTMT HUB - Grow a Garden 2 v6.1.2 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.1.2")
 
 local genv = _G
 if type(getgenv) == "function" then
@@ -116,6 +116,38 @@ if type(gethui) ~= "function" then
         return lp and lp:FindFirstChild("PlayerGui") or game:GetService("CoreGui")
     end)
 end
+if type(protect_gui) ~= "function" then
+    publishGlobal("protect_gui", function(gui)
+        if not gui then return end
+        pcall(function()
+            if syn and type(syn.protect_gui) == "function" then syn.protect_gui(gui) end
+        end)
+    end)
+end
+
+local function publishWindUIGlobals()
+    local extras = {
+        cloneref = cloneref,
+        clonereference = clonereference,
+        newcclosure = newcclosure,
+        identifyexecutor = identifyexecutor,
+        getexecutorname = getexecutorname,
+        setclipboard = setclipboard,
+        fireproximityprompt = fireproximityprompt,
+        syn = syn,
+        http = http,
+        request = request,
+        http_request = http_request,
+    }
+    for name, val in pairs(extras) do
+        if val ~= nil then publishGlobal(name, val) end
+    end
+    for _, name in ipairs({ "makefolder", "isfolder", "isfile", "listfiles", "writefile", "readfile", "delfile", "delfolder", "appendfile", "gethui", "protect_gui", "gethwid" }) do
+        if type(genv[name]) == "function" or type(_G[name]) == "function" then
+            publishGlobal(name, genv[name] or _G[name])
+        end
+    end
+end
 
 local function hubWarn(...)
     warn("[NTMT HUB]", ...)
@@ -127,45 +159,11 @@ local function cleanupBrokenGetIcons()
         local gi = rs:FindFirstChild("GetIcons")
         if gi and type(gi.InvokeServer) ~= "function" then
             gi:Destroy()
-            hubWarn("Removed broken ReplicatedStorage.GetIcons (not a RemoteFunction)")
         end
     end)
 end
 
-local function installGetIconsHook()
-    cleanupBrokenGetIcons()
-    local RS = game:GetService("ReplicatedStorage")
-    local iconsPayload = { Icons = {} }
-    local mock = setmetatable({}, {
-        __index = function(_, key)
-            if key == "InvokeServer" then return function() return iconsPayload end end
-            if key == "Name" then return "GetIcons" end
-            if key == "Parent" then return RS end
-            if key == "IsA" then return function(_, class) return class == "RemoteFunction" or class == "Instance" end end
-            return nil
-        end,
-    })
-
-    local function isGetIconsWait(self, childName)
-        return (self == RS or (typeof(self) == "Instance" and self.Name == "ReplicatedStorage")) and childName == "GetIcons"
-    end
-
-    if hookmetamethod and getnamecallmethod then
-        pcall(function()
-            local nc = newcclosure or function(f) return f end
-            local oldNamecall
-            oldNamecall = hookmetamethod(game, "__namecall", nc(function(self, ...)
-                local method = getnamecallmethod()
-                if method == "WaitForChild" and isGetIconsWait(self, select(1, ...)) then
-                    return mock
-                end
-                if oldNamecall then
-                    return oldNamecall(self, ...)
-                end
-            end))
-        end)
-    end
-end
+-- NO hookmetamethod / hookfunction — breaks game __namecall on many executors (nil crash + GetServerChannel warnings).
 
 local function dumpGetIconsSnippet(body)
     if type(body) ~= "string" then return end
@@ -212,19 +210,35 @@ local function windUISourceClean(body)
 end
 
 local function compileWindUIChunk(body)
+    publishWindUIGlobals()
+    local env = setmetatable({}, {
+        __index = function(_, key)
+            local v = genv[key]
+            if v ~= nil then return v end
+            return _G[key]
+        end,
+        __newindex = function(_, key, val)
+            genv[key] = val
+            _G[key] = val
+        end,
+    })
     if type(loadstring) == "function" then
         local chunk, err = loadstring(body, "WindUI")
         if type(chunk) ~= "function" then return nil, err end
+        if setfenv then
+            setfenv(chunk, env)
+        end
         return chunk
     end
     if type(load) == "function" then
-        return load(body, "WindUI", "t", genv)
+        return load(body, "WindUI", "t", env)
     end
     return nil, "no loadstring/load"
 end
 
-local WINDUI_CACHE = "ntmthub/windui_patched_v5.lua"
+local WINDUI_CACHE = "ntmthub/windui_patched_v6.lua"
 local WINDUI_CACHE_OLD = {
+    "ntmthub/windui_patched_v5.lua",
     "ntmthub/windui_patched_v4.lua",
     "ntmthub/windui_patched_v3.lua",
     "ntmthub/windui_patched_v2.lua",
@@ -612,7 +626,14 @@ local function createFallbackUI()
 end
 
 local function loadWindUI()
-    installGetIconsHook()
+    if genv.NTMT_USE_BUILTIN_UI == true then
+        WindUI = createFallbackUI()
+        print("[NTMT HUB] Built-in UI (NTMT_USE_BUILTIN_UI=true)")
+        return true
+    end
+
+    cleanupBrokenGetIcons()
+    publishWindUIGlobals()
     purgeOldWindUICache()
     if type(loadstring) ~= "function" and type(load) ~= "function" then
         hubWarn("loadstring/load missing — using built-in UI")
@@ -645,6 +666,7 @@ local function loadWindUI()
         body, patchedOk = patchWindUISource(body)
         if not patchedOk then
             hubWarn("WindUI GetIcons patch FAILED — using built-in UI")
+            if delfile and isfile and isfile(WINDUI_CACHE) then pcall(delfile, WINDUI_CACHE) end
             WindUI = createFallbackUI()
             return true
         end
@@ -656,7 +678,7 @@ local function loadWindUI()
         end
     end
 
-    installGetIconsHook()
+    publishWindUIGlobals()
 
     local chunk, compileErr = compileWindUIChunk(body)
     if type(chunk) ~= "function" then
@@ -683,8 +705,6 @@ local function loadWindUI()
     print("[NTMT HUB] WindUI loaded OK")
     return true
 end
-
-installGetIconsHook()
 
 local function dumpDebugLog()
     local log = genv.__NTMT_DEBUG_LOG
@@ -2474,16 +2494,34 @@ end
 
 -- ===== WINDUI =====
 
-local Window = WindUI:CreateWindow({
-    Title = "NTMT HUB | Grow a Garden 2",
-    Author = MADE_BY .. " | " .. Executor,
-    Folder = "ntmthub",
-    Icon = "sprout",
-    NewElements = true,
-    OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
-})
+publishWindUIGlobals()
+local Window
+do
+    local winOk, winOrErr = xpcall(function()
+        return WindUI:CreateWindow({
+            Title = "NTMT HUB | Grow a Garden 2",
+            Author = MADE_BY .. " | " .. Executor,
+            Folder = "ntmthub",
+            Icon = "sprout",
+            NewElements = true,
+            OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
+        })
+    end, noopErr)
+    if winOk and winOrErr then
+        Window = winOrErr
+    else
+        hubWarn("CreateWindow failed — switching to built-in UI:", tostring(winOrErr))
+        WindUI = createFallbackUI()
+        Window = WindUI:CreateWindow({
+            Title = "NTMT HUB | Grow a Garden 2",
+            Author = MADE_BY .. " | " .. Executor,
+            Folder = "ntmthub",
+            OpenButton = { Title = "NTMT HUB", Enabled = true },
+        })
+    end
+end
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.1", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.1.2", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
 
@@ -2826,7 +2864,7 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v6.1] Loaded | " .. Executor)
+print("[NTMT HUB v6.1.2] Loaded | " .. Executor)
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
         Title = "NTMT HUB",
