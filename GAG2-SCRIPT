@@ -1,5 +1,8 @@
---[[ NTMT HUB - Grow a Garden 2 v6.3 | made by nguoitinhmuathu | Delta-safe ]]
-print("[NTMT HUB] BOOT v6.3")
+--[[ NTMT HUB - Grow a Garden 2 v6.0.1 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.0.1")
+
+local DISCORD_LINK = "https://discord.gg/your-invite"
+local MADE_BY = "nguoitinhmuathu"
 
 local genv = _G
 if type(getgenv) == "function" then
@@ -8,40 +11,9 @@ if type(getgenv) == "function" then
 elseif type(getgenv) == "table" then
     genv = getgenv
 end
-genv.__NTMT_LAST_STEP = "boot"
-genv.__NTMT_DEBUG_LOG = {}
-
-local function hubDbg(_, msg)
-    print("[NTMT HUB] " .. tostring(msg))
-end
-
-local function hubFatal(where, err)
-    local errText = tostring(err or "unknown error")
-    local last = genv.__NTMT_LAST_STEP or "?"
-    warn("==================================================")
-    warn("[NTMT HUB FATAL] Where:", where)
-    warn("[NTMT HUB FATAL] Last step:", last)
-    warn("[NTMT HUB FATAL] Error:", errText)
-    warn("==================================================")
-    print("==================================================")
-    print("[NTMT HUB FATAL] Where:", where)
-    print("[NTMT HUB FATAL] Last step:", last)
-    print("[NTMT HUB FATAL] Error:", errText)
-    print("==================================================")
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "NTMT HUB Crash",
-            Text = tostring(where) .. ": " .. errText:sub(1, 50),
-            Duration = 15,
-        })
-    end)
-end
-
-local DISCORD_LINK = "https://discord.gg/your-invite"
-local MADE_BY = "nguoitinhmuathu"
 
 if genv.__NTMT_HUB_RUNNING then
-    warn("[NTMT HUB] Already running — rejoin game first")
+    warn("[NTMT HUB] Already running — execute only once")
     return
 end
 genv.__NTMT_HUB_RUNNING = true
@@ -68,35 +40,6 @@ do
 end
 
 local cloneref = cloneref or clonereference or function(o) return o end
-
-if type(task) ~= "table" then
-    task = {}
-end
-if type(task.wait) ~= "function" then task.wait = wait or function() end end
-if type(task.spawn) ~= "function" then task.spawn = spawn or function(fn) if fn then fn() end end end
-if type(task.defer) ~= "function" then task.defer = task.spawn end
-publishGlobal("task", task)
-
-local function setStep(step)
-    genv.__NTMT_LAST_STEP = step
-    print("[NTMT HUB]", step)
-end
-
-local function preferBuiltinUI()
-    if genv.NTMT_USE_WINDUI == true then return false end
-    return true
-end
-
-print("[NTMT HUB] UI mode: built-in (WindUI off — set getgenv().NTMT_USE_WINDUI=true to enable)")
-local hubDefer = (task and type(task.defer) == "function" and task.defer)
-    or (type(spawn) == "function" and spawn)
-    or function(fn) if type(fn) == "function" then fn() end end
-local hubSpawn = (task and type(task.spawn) == "function" and task.spawn)
-    or (type(spawn) == "function" and spawn)
-    or function(fn) if type(fn) == "function" then fn() end end
-local hubWait = (task and type(task.wait) == "function" and task.wait)
-    or (type(wait) == "function" and wait)
-    or function() end
 
 if type(table.clear) ~= "function" then
     table.clear = function(t)
@@ -136,38 +79,6 @@ if type(gethui) ~= "function" then
         return lp and lp:FindFirstChild("PlayerGui") or game:GetService("CoreGui")
     end)
 end
-if type(protect_gui) ~= "function" then
-    publishGlobal("protect_gui", function(gui)
-        if not gui then return end
-        pcall(function()
-            if syn and type(syn.protect_gui) == "function" then syn.protect_gui(gui) end
-        end)
-    end)
-end
-
-local function publishWindUIGlobals()
-    local extras = {
-        cloneref = cloneref,
-        clonereference = clonereference,
-        newcclosure = newcclosure,
-        identifyexecutor = identifyexecutor,
-        getexecutorname = getexecutorname,
-        setclipboard = setclipboard,
-        fireproximityprompt = fireproximityprompt,
-        syn = syn,
-        http = http,
-        request = request,
-        http_request = http_request,
-    }
-    for name, val in pairs(extras) do
-        if val ~= nil then publishGlobal(name, val) end
-    end
-    for _, name in ipairs({ "makefolder", "isfolder", "isfile", "listfiles", "writefile", "readfile", "delfile", "delfolder", "appendfile", "gethui", "protect_gui", "gethwid" }) do
-        if type(genv[name]) == "function" or type(_G[name]) == "function" then
-            publishGlobal(name, genv[name] or _G[name])
-        end
-    end
-end
 
 local function hubWarn(...)
     warn("[NTMT HUB]", ...)
@@ -179,20 +90,44 @@ local function cleanupBrokenGetIcons()
         local gi = rs:FindFirstChild("GetIcons")
         if gi and type(gi.InvokeServer) ~= "function" then
             gi:Destroy()
+            hubWarn("Removed broken ReplicatedStorage.GetIcons (not a RemoteFunction)")
         end
     end)
 end
 
--- NO hookmetamethod / hookfunction — breaks game __namecall on many executors (nil crash + GetServerChannel warnings).
+local function installGetIconsHook()
+    cleanupBrokenGetIcons()
+    local RS = game:GetService("ReplicatedStorage")
+    local iconsPayload = { Icons = {} }
+    local mock = setmetatable({}, {
+        __index = function(_, key)
+            if key == "InvokeServer" then return function() return iconsPayload end end
+            if key == "Name" then return "GetIcons" end
+            if key == "Parent" then return RS end
+            if key == "IsA" then return function(_, class) return class == "RemoteFunction" or class == "Instance" end end
+            return nil
+        end,
+    })
 
-local function dumpGetIconsSnippet(body)
-    if type(body) ~= "string" then return end
-    local idx = body:find("GetIcons", 1, true)
-    if not idx then
-        hubWarn("Patch check: GetIcons string NOT found in WindUI body")
-        return
+    local function isGetIconsWait(self, childName)
+        return (self == RS or (typeof(self) == "Instance" and self.Name == "ReplicatedStorage")) and childName == "GetIcons"
     end
-    hubWarn("Patch check: GetIcons context:", body:sub(math.max(1, idx - 60), math.min(#body, idx + 100)))
+
+    if hookmetamethod and getnamecallmethod then
+        pcall(function()
+            local nc = newcclosure or function(f) return f end
+            local oldNamecall
+            oldNamecall = hookmetamethod(game, "__namecall", nc(function(self, ...)
+                local method = getnamecallmethod()
+                if method == "WaitForChild" and isGetIconsWait(self, select(1, ...)) then
+                    return mock
+                end
+                if oldNamecall then
+                    return oldNamecall(self, ...)
+                end
+            end))
+        end)
+    end
 end
 
 local function patchWindUISource(body)
@@ -204,14 +139,6 @@ local function patchWindUISource(body)
         body = body:sub(1, s - 1) .. replacement .. body:sub(e + 1)
     end
     body = body:gsub(
-        'function a%.b%(%)%s*local b=%(cloneref or clonereference or function%(b%)return b end%)%s*local d=b%(game:GetService"ReplicatedStorage":WaitForChild%("GetIcons",%d+%):InvokeServer%(%)%)',
-        'function a.b() local b=(cloneref or clonereference or function(b)return b end) local d=b({Icons={}})'
-    )
-    body = body:gsub(
-        'local d=b%(game:GetService"ReplicatedStorage":WaitForChild%("GetIcons",%d+%):InvokeServer%(%)%)',
-        replacement
-    )
-    body = body:gsub(
         'b%(game:GetService"ReplicatedStorage":WaitForChild%("GetIcons",%d+%):InvokeServer%(%)%)',
         'b({Icons={}})'
     )
@@ -219,70 +146,29 @@ local function patchWindUISource(body)
         'game:GetService"ReplicatedStorage":WaitForChild%("GetIcons",%d+%):InvokeServer%(%)',
         '({Icons={}})'
     )
-    body = body:gsub('WaitForChild%("GetIcons",%d+%):InvokeServer%(%)', '({Icons={}})')
-    body = body:gsub('GetIcons.-:InvokeServer%(%)', '{Icons={}}')
     local stillBad = body:find('GetIcons.-InvokeServer%(%)') ~= nil
+        or body:find(':WaitForChild%("GetIcons",%d+%):InvokeServer%(%)') ~= nil
     return body, not stillBad
 end
 
-local function windUISourceClean(body)
-    return type(body) == "string" and not body:find("GetIcons.-InvokeServer%(%)")
-end
-
 local function compileWindUIChunk(body)
-    publishWindUIGlobals()
-    local env = setmetatable({}, {
-        __index = function(_, key)
-            local v = genv[key]
-            if v ~= nil then return v end
-            return _G[key]
-        end,
-        __newindex = function(_, key, val)
-            genv[key] = val
-            _G[key] = val
-        end,
-    })
     if type(loadstring) == "function" then
         local chunk, err = loadstring(body, "WindUI")
         if type(chunk) ~= "function" then return nil, err end
-        if setfenv then
-            setfenv(chunk, env)
-        end
         return chunk
     end
     if type(load) == "function" then
-        return load(body, "WindUI", "t", env)
+        return load(body, "WindUI", "t", genv)
     end
     return nil, "no loadstring/load"
 end
 
-local WINDUI_CACHE = "ntmthub/windui_patched_v6.lua"
-local WINDUI_CACHE_OLD = {
-    "ntmthub/windui_patched_v5.lua",
-    "ntmthub/windui_patched_v4.lua",
-    "ntmthub/windui_patched_v3.lua",
-    "ntmthub/windui_patched_v2.lua",
-    "ntmthub/windui_patched.lua",
-}
-
-local function purgeOldWindUICache()
-    if not delfile then return end
-    for _, path in ipairs(WINDUI_CACHE_OLD) do
-        if isfile and isfile(path) then pcall(delfile, path) end
-    end
-    if isfile and isfile(WINDUI_CACHE) then
-        local cached = readfile and readfile(WINDUI_CACHE)
-        if type(cached) == "string" and not windUISourceClean(cached) then
-            pcall(delfile, WINDUI_CACHE)
-        end
-    end
-end
+local WINDUI_CACHE = "ntmthub/windui_patched_v3.lua"
 
 local function safeNetCall(remote, ...)
     if not remote or type(remote.Fire) ~= "function" then return false end
     local args = { ... }
-    local unpackFn = table.unpack or unpack
-    return select(1, xpcall(function() remote:Fire(unpackFn(args)) end, noopErr))
+    return select(1, xpcall(function() remote:Fire(table.unpack(args)) end, noopErr))
 end
 
 local function safeFlagGet(flagObj)
@@ -318,385 +204,11 @@ local function httpPost(url, body)
 end
 
 local WindUI
-
-local function createFallbackUI()
-    local UI = {}
-    local theme = {
-        bg = Color3.fromRGB(13, 13, 13),
-        panel = Color3.fromRGB(22, 22, 22),
-        accent = Color3.fromRGB(255, 79, 216),
-        text = Color3.fromRGB(240, 240, 240),
-        sub = Color3.fromRGB(150, 150, 150),
-        btn = Color3.fromRGB(35, 35, 35),
-    }
-
-    local function guiParent()
-        if type(gethui) == "function" then
-            local ok, h = pcall(gethui)
-            if ok and h then return h end
-        end
-        local ok, core = pcall(function() return game:GetService("CoreGui") end)
-        if ok and core then return core end
-        local lp = game:GetService("Players").LocalPlayer
-        if lp then
-            local pg = lp:FindFirstChild("PlayerGui")
-            if not pg then
-                local wok, waited = pcall(function() return lp:WaitForChild("PlayerGui", 8) end)
-                if wok then pg = waited end
-            end
-            if pg then return pg end
-        end
-        return nil
-    end
-
-    function UI:Notify(cfg)
-        cfg = cfg or {}
-        pcall(function()
-            game:GetService("StarterGui"):SetCore("SendNotification", {
-                Title = cfg.Title or "NTMT HUB",
-                Text = cfg.Content or "",
-                Duration = cfg.Duration or 4,
-            })
-        end)
-    end
-    function UI:AddTheme() end
-    function UI:SetTheme() end
-
-    function UI:CreateWindow(cfg)
-        cfg = cfg or {}
-        local win = {}
-        local gui = Instance.new("ScreenGui")
-        gui.Name = "NTMT_HUB_UI"
-        gui.ResetOnSpawn = false
-        gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-        gui.DisplayOrder = 888888
-        pcall(function()
-            if type(protect_gui) == "function" then protect_gui(gui) end
-        end)
-        local parent = guiParent()
-        if not parent then
-            for _ = 1, 24 do
-                task.wait(0.25)
-                parent = guiParent()
-                if parent then break end
-            end
-        end
-        if not parent then
-            hubWarn("No GUI parent — aborting built-in UI")
-            return nil
-        end
-        gui.Parent = parent
-
-        local openBtn = Instance.new("TextButton")
-        openBtn.Size = UDim2.new(0, 110, 0, 34)
-        openBtn.Position = UDim2.new(0, 10, 0.5, -17)
-        openBtn.BackgroundColor3 = theme.accent
-        openBtn.Text = (cfg.OpenButton and cfg.OpenButton.Title) or "NTMT HUB"
-        openBtn.TextColor3 = Color3.new(1, 1, 1)
-        openBtn.Font = Enum.Font.GothamBold
-        openBtn.TextSize = 14
-        openBtn.Parent = gui
-
-        local main = Instance.new("Frame")
-        main.Size = UDim2.new(0, 540, 0, 400)
-        main.Position = UDim2.new(0.5, -270, 0.5, -200)
-        main.BackgroundColor3 = theme.bg
-        main.BorderSizePixel = 0
-        main.Parent = gui
-
-        local bar = Instance.new("Frame")
-        bar.Size = UDim2.new(1, 0, 0, 34)
-        bar.BackgroundColor3 = theme.panel
-        bar.Parent = main
-        local barTitle = Instance.new("TextLabel")
-        barTitle.Size = UDim2.new(1, -40, 1, 0)
-        barTitle.BackgroundTransparency = 1
-        barTitle.Text = "  " .. (cfg.Title or "NTMT HUB")
-        barTitle.TextXAlignment = Enum.TextXAlignment.Left
-        barTitle.TextColor3 = theme.text
-        barTitle.Font = Enum.Font.GothamBold
-        barTitle.TextSize = 15
-        barTitle.Parent = bar
-
-        local tabBar = Instance.new("Frame")
-        tabBar.Size = UDim2.new(0, 118, 1, -34)
-        tabBar.Position = UDim2.new(0, 0, 0, 34)
-        tabBar.BackgroundColor3 = theme.panel
-        tabBar.Parent = main
-        Instance.new("UIListLayout", tabBar).Padding = UDim.new(0, 2)
-
-        local scroll = Instance.new("ScrollingFrame")
-        scroll.Size = UDim2.new(1, -124, 1, -42)
-        scroll.Position = UDim2.new(0, 120, 0, 38)
-        scroll.BackgroundTransparency = 1
-        scroll.ScrollBarThickness = 5
-        scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        scroll.CanvasSize = UDim2.new()
-        scroll.Parent = main
-        Instance.new("UIListLayout", scroll).Padding = UDim.new(0, 4)
-
-        openBtn.MouseButton1Click:Connect(function() main.Visible = not main.Visible end)
-
-        local drag, dragStart, startPos = false, nil, nil
-        bar.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                drag, dragStart, startPos = true, input.Position, main.Position
-            end
-        end)
-        game:GetService("UserInputService").InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then drag = false end
-        end)
-        game:GetService("UserInputService").InputChanged:Connect(function(input)
-            if drag and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-                local d = input.Position - dragStart
-                main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-            end
-        end)
-
-        function win:Tag() end
-
-        function win:Tab(tabCfg)
-            tabCfg = tabCfg or {}
-            local tabObj = {}
-            local page = Instance.new("Frame")
-            page.Size = UDim2.new(1, -6, 0, 0)
-            page.AutomaticSize = Enum.AutomaticSize.Y
-            page.BackgroundTransparency = 1
-            page.Visible = false
-            page.Parent = scroll
-            Instance.new("UIListLayout", page).Padding = UDim.new(0, 3)
-
-            local tbtn = Instance.new("TextButton")
-            tbtn.Size = UDim2.new(1, -4, 0, 30)
-            tbtn.Text = tabCfg.Title or "Tab"
-            tbtn.Font = Enum.Font.Gotham
-            tbtn.TextSize = 12
-            tbtn.TextColor3 = theme.text
-            tbtn.BackgroundColor3 = theme.btn
-            tbtn.Parent = tabBar
-
-            local function selectPage()
-                for _, p in scroll:GetChildren() do
-                    if p:IsA("Frame") then p.Visible = false end
-                end
-                for _, b in tabBar:GetChildren() do
-                    if b:IsA("TextButton") then b.BackgroundColor3 = theme.btn end
-                end
-                page.Visible = true
-                tbtn.BackgroundColor3 = theme.accent
-            end
-            tbtn.MouseButton1Click:Connect(selectPage)
-            if #tabBar:GetChildren() <= 2 then selectPage() end
-
-            function tabObj:Section(s)
-                local l = Instance.new("TextLabel")
-                l.Size = UDim2.new(1, -8, 0, 22)
-                l.BackgroundTransparency = 1
-                l.TextXAlignment = Enum.TextXAlignment.Left
-                l.Text = "— " .. (s.Title or "")
-                l.TextColor3 = theme.accent
-                l.Font = Enum.Font.GothamBold
-                l.TextSize = 13
-                l.Parent = page
-            end
-
-            function tabObj:Toggle(t)
-                local state = t.Default == true
-                local row = Instance.new("TextButton")
-                row.Size = UDim2.new(1, -8, 0, 34)
-                row.BackgroundColor3 = theme.btn
-                row.Text = ""
-                row.Parent = page
-                local lbl = Instance.new("TextLabel")
-                lbl.Size = UDim2.new(1, -52, 1, 0)
-                lbl.Position = UDim2.new(0, 8, 0, 0)
-                lbl.BackgroundTransparency = 1
-                lbl.TextXAlignment = Enum.TextXAlignment.Left
-                lbl.Text = t.Title or "Toggle"
-                lbl.TextColor3 = theme.text
-                lbl.Font = Enum.Font.Gotham
-                lbl.TextSize = 13
-                lbl.Parent = row
-                local badge = Instance.new("TextLabel")
-                badge.Size = UDim2.new(0, 42, 0, 22)
-                badge.Position = UDim2.new(1, -46, 0.5, -11)
-                badge.Font = Enum.Font.GothamBold
-                badge.TextSize = 11
-                badge.TextColor3 = Color3.new(1, 1, 1)
-                badge.Parent = row
-                local function paint()
-                    badge.Text = state and "ON" or "OFF"
-                    badge.BackgroundColor3 = state and theme.accent or Color3.fromRGB(55, 55, 55)
-                end
-                paint()
-                row.MouseButton1Click:Connect(function()
-                    state = not state
-                    paint()
-                    if t.Callback then t.Callback(state) end
-                end)
-            end
-
-            function tabObj:Button(b)
-                local row = Instance.new("TextButton")
-                row.Size = UDim2.new(1, -8, 0, 32)
-                row.BackgroundColor3 = theme.accent
-                row.Text = b.Title or "Button"
-                row.TextColor3 = Color3.new(1, 1, 1)
-                row.Font = Enum.Font.GothamBold
-                row.TextSize = 13
-                row.Parent = page
-                row.MouseButton1Click:Connect(function() if b.Callback then b.Callback() end end)
-            end
-
-            function tabObj:Input(inp)
-                local box = Instance.new("TextBox")
-                box.Size = UDim2.new(1, -8, 0, 50)
-                box.BackgroundColor3 = theme.btn
-                box.TextColor3 = theme.text
-                box.ClearTextOnFocus = false
-                box.Text = inp.Value or ""
-                box.PlaceholderText = (inp.Title or "Input") .. " — " .. (inp.Placeholder or "")
-                box.Font = Enum.Font.Code
-                box.TextSize = 12
-                box.Parent = page
-                box.FocusLost:Connect(function() if inp.Callback then inp.Callback(box.Text) end end)
-            end
-
-            function tabObj:Slider(s)
-                local minV = (s.Value and s.Value.Min) or 0
-                local maxV = (s.Value and s.Value.Max) or 100
-                local val = (s.Value and s.Value.Default) or minV
-                local box = Instance.new("TextBox")
-                box.Size = UDim2.new(1, -8, 0, 40)
-                box.BackgroundColor3 = theme.btn
-                box.TextColor3 = theme.text
-                box.Text = (s.Title or "Slider") .. ": " .. tostring(val)
-                box.Font = Enum.Font.Code
-                box.TextSize = 12
-                box.Parent = page
-                box.FocusLost:Connect(function()
-                    val = math.clamp(tonumber(box.Text:match("%d+")) or val, minV, maxV)
-                    box.Text = (s.Title or "Slider") .. ": " .. tostring(val)
-                    if s.Callback then s.Callback(val) end
-                end)
-            end
-
-            function tabObj:Dropdown(d)
-                local values = d.Values or {}
-                local idx = 1
-                local picked = {}
-                if d.Value and not d.Multi then
-                    for i, v in ipairs(values) do if v == d.Value then idx = i break end end
-                end
-                local hint = d.Multi and " (tap=cycle+toggle)" or " (tap=cycle)"
-                local row = Instance.new("TextButton")
-                row.Size = UDim2.new(1, -8, 0, 40)
-                row.BackgroundColor3 = theme.btn
-                row.Text = ""
-                row.Parent = page
-                local lbl = Instance.new("TextLabel")
-                lbl.Size = UDim2.new(1, -10, 1, 0)
-                lbl.Position = UDim2.new(0, 8, 0, 0)
-                lbl.BackgroundTransparency = 1
-                lbl.TextXAlignment = Enum.TextXAlignment.Left
-                lbl.TextWrapped = true
-                lbl.TextColor3 = theme.text
-                lbl.Font = Enum.Font.Gotham
-                lbl.TextSize = 11
-                lbl.Parent = row
-                local function refresh()
-                    if d.Multi then
-                        local parts = {}
-                        for _, v in ipairs(values) do if picked[v] then parts[#parts + 1] = v end end
-                        lbl.Text = (d.Title or "Select") .. hint .. "\n" .. (#parts > 0 and table.concat(parts, ", ") or "none")
-                    else
-                        lbl.Text = (d.Title or "Select") .. hint .. "\n" .. tostring(values[idx] or "?")
-                    end
-                end
-                refresh()
-                row.MouseButton1Click:Connect(function()
-                    if #values == 0 then return end
-                    local v = values[idx]
-                    if d.Multi then
-                        picked[v] = not picked[v]
-                        if not picked[v] then picked[v] = nil end
-                        if d.Callback then d.Callback(picked) end
-                    elseif d.Callback then
-                        d.Callback(v)
-                    end
-                    idx = idx % #values + 1
-                    refresh()
-                end)
-            end
-
-            function tabObj:Paragraph(p)
-                local para = {}
-                local frame = Instance.new("Frame")
-                frame.Size = UDim2.new(1, -8, 0, 0)
-                frame.AutomaticSize = Enum.AutomaticSize.Y
-                frame.BackgroundColor3 = theme.btn
-                frame.BackgroundTransparency = 0.4
-                frame.Parent = page
-                Instance.new("UIListLayout", frame).Padding = UDim.new(0, 2)
-                local t = Instance.new("TextLabel")
-                t.Size = UDim2.new(1, -8, 0, 18)
-                t.BackgroundTransparency = 1
-                t.TextXAlignment = Enum.TextXAlignment.Left
-                t.Text = p.Title or ""
-                t.TextColor3 = theme.text
-                t.Font = Enum.Font.GothamBold
-                t.TextSize = 12
-                t.Parent = frame
-                local desc = Instance.new("TextLabel")
-                desc.Size = UDim2.new(1, -8, 0, 0)
-                desc.AutomaticSize = Enum.AutomaticSize.Y
-                desc.BackgroundTransparency = 1
-                desc.TextXAlignment = Enum.TextXAlignment.Left
-                desc.TextWrapped = true
-                desc.Text = p.Desc or ""
-                desc.TextColor3 = theme.sub
-                desc.Font = Enum.Font.Code
-                desc.TextSize = 11
-                desc.Parent = frame
-                function para:SetDesc(text) desc.Text = text or "" end
-                return para
-            end
-
-            return tabObj
-        end
-
-        return win
-    end
-
-    return UI
-end
-
 local function loadWindUI()
-    publishWindUIGlobals()
-
-    if preferBuiltinUI() then
-        if delfile and isfile then
-            for _, path in ipairs({
-                WINDUI_CACHE,
-                "ntmthub/windui_patched_v5.lua",
-                "ntmthub/windui_patched_v4.lua",
-                "ntmthub/windui_patched_v3.lua",
-            }) do
-                if isfile(path) then pcall(delfile, path) end
-            end
-        end
-        WindUI = createFallbackUI()
-        print("[NTMT HUB] Built-in UI ready | " .. Executor)
-        return true
-    end
-
-    -- WindUI only when getgenv().NTMT_USE_WINDUI == true
-    cleanupBrokenGetIcons()
-    purgeOldWindUICache()
+    installGetIconsHook()
     if type(loadstring) ~= "function" and type(load) ~= "function" then
-        hubWarn("loadstring/load missing — using built-in UI")
-        WindUI = createFallbackUI()
-        return true
+        hubWarn("loadstring/load missing on this executor")
+        return false
     end
 
     local body, patchedOk
@@ -717,16 +229,13 @@ local function loadWindUI()
     if not patchedOk then
         body = universalHttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua")
         if type(body) ~= "string" or #body < 1000 then
-            hubWarn("Could not download WindUI — using built-in UI")
-            WindUI = createFallbackUI()
-            return true
+            hubWarn("Could not download WindUI (check HttpGet / internet)")
+            return false
         end
         body, patchedOk = patchWindUISource(body)
         if not patchedOk then
-            hubWarn("WindUI GetIcons patch FAILED — using built-in UI")
-            if delfile and isfile and isfile(WINDUI_CACHE) then pcall(delfile, WINDUI_CACHE) end
-            WindUI = createFallbackUI()
-            return true
+            hubWarn("WindUI GetIcons patch FAILED — send console log to dev")
+            return false
         end
         if writefile then
             pcall(function()
@@ -736,13 +245,12 @@ local function loadWindUI()
         end
     end
 
-    publishWindUIGlobals()
+    installGetIconsHook()
 
     local chunk, compileErr = compileWindUIChunk(body)
     if type(chunk) ~= "function" then
         hubWarn("WindUI compile failed:", tostring(compileErr))
-        WindUI = createFallbackUI()
-        return true
+        return false
     end
     local ok, lib = xpcall(chunk, function(err)
         if debug and debug.traceback then return debug.traceback(tostring(err), 2) end
@@ -751,29 +259,18 @@ local function loadWindUI()
     if not ok then
         hubWarn("WindUI runtime error:", tostring(lib))
         if delfile and isfile and isfile(WINDUI_CACHE) then pcall(delfile, WINDUI_CACHE) end
-        WindUI = createFallbackUI()
-        return true
+        return false
     end
     if type(lib) ~= "table" or type(lib.CreateWindow) ~= "function" then
-        hubWarn("WindUI invalid — using built-in UI")
-        WindUI = createFallbackUI()
-        return true
+        hubWarn("WindUI returned invalid library")
+        return false
     end
     WindUI = lib
     print("[NTMT HUB] WindUI loaded OK")
     return true
 end
 
-local function dumpDebugLog()
-    local log = genv.__NTMT_DEBUG_LOG
-    if type(log) ~= "table" then return end
-    warn("[NTMT HUB] === FULL DEBUG LOG ===")
-    for i, line in ipairs(log) do warn(string.format("  %03d %s", i, line)) end
-    warn("[NTMT HUB] === END DEBUG LOG ===")
-end
-
 local function runMain()
-setStep("M01 runMain start")
 
 local Services = {
     Players = cloneref(game:GetService("Players")),
@@ -788,24 +285,19 @@ local Services = {
 
 local LocalPlayer = Services.Players.LocalPlayer
 if not LocalPlayer then
-    setStep("M02 waiting LocalPlayer")
-    LocalPlayer = Services.Players.PlayerAdded:Wait()
+        LocalPlayer = Services.Players.PlayerAdded:Wait()
 end
-setStep("M03 waiting game:IsLoaded")
 repeat task.wait() until game:IsLoaded()
 if not LocalPlayer.Character then
-    setStep("M04 waiting character")
-    LocalPlayer.CharacterAdded:Wait()
+        LocalPlayer.CharacterAdded:Wait()
     task.wait(0.5)
 end
 
-setStep("M05 loadWindUI")
 if not loadWindUI() then
     hubWarn("Script stopped (UI failed)")
     return
 end
 
-setStep("M06 waiting Gardens")
 local Gardens = Services.Workspace:WaitForChild("Gardens", 120)
 if not Gardens then warn("[NTMT HUB] Gardens not found") return end
 
@@ -821,9 +313,7 @@ local function waitTag(tag, timeout)
     return Services.CollectionService:HasTag(LocalPlayer, tag)
 end
 waitTag("DataLoaded", 120)
-setStep("M07 DataLoaded")
 
-setStep("M08 requiring modules")
 local Shared = Services.ReplicatedStorage:WaitForChild("SharedModules", 60)
 local function safeRequire(mod)
     if not mod then return nil end
@@ -847,7 +337,6 @@ if PlayerState and type(PlayerState.WaitForLocalReplica) == "function" then
     local ok, rep = xpcall(function() return PlayerState:WaitForLocalReplica(120) end, noopErr)
     if ok then PlayerReplica = rep end
 end
-setStep("M09 modules OK")
 if type(SeedData) ~= "table" then hubWarn("SeedData missing") return end
 if type(GearShopData) ~= "table" or type(GearShopData.Data) ~= "table" then hubWarn("GearShopData missing") return end
 
@@ -900,7 +389,7 @@ local UI_THEMES = {
     Yellow = { accent = "#eab308", bg = "#1a160a", btn = "#3d3415", text = "#fffbe6", toggle = "#eab308" },
     Purple = { accent = "#a855f7", bg = "#140a1a", btn = "#2a153d", text = "#f3e6ff", toggle = "#a855f7" },
 }
-local COOLDOWN = { Harvest = 0.01, Plant = 0.35, Buy = 0.01, Expand = 8, Sell = 0.5, SellEvery = 0.01, Shovel = 0.25, Gear = 0.5, Pet = 0.2, Mail = 2, Water = 0.55 }
+local COOLDOWN = { Harvest = 0.01, Plant = 0.35, Buy = 0.01, Expand = 8, Sell = 0.5, Shovel = 0.25, Gear = 0.5, Pet = 0.35, Mail = 2 }
 local PLANT_MIN_DIST = 3
 local MUTATION_COLLECT_WAIT = 0.1
 local SLOW_FLY_RATIO = 0.22
@@ -908,7 +397,7 @@ local PET_FIND_SCAN_SEC = 5
 local FLY_STEP = 18
 local SEGMENT_PAUSE = 1
 local NEAR_PLAYER_DIST = 20
-local PLOT_EDGE_MARGIN = 14
+local PLOT_EDGE_MARGIN = 8
 local SPRINKLER_MIN_DIST = 8
 local STEAL_BATCH = 3
 local STEAL_HOLD_TIMEOUT = 12
@@ -922,20 +411,13 @@ local CONFIG_FILE = "ntmthub_gag2_config.json"
 
 local movementBypass = false
 local gardenActionLock = false
-local plantingBusy, sprinklerBusy, shovelBusy, stealBusy, dropsBusy, waterBusy = false, false, false, false, false, false
+local plantingBusy, sprinklerBusy, shovelBusy, stealBusy, dropsBusy = false, false, false, false, false
 local sprinkledSpots = {}
 local sprinkledPlantKeys = {}
-local inventoryFavoriteRemote = nil
 
 genv.ftgs_AutoHarvest = false
 genv.ftgs_AutoSell = false
-genv.ftgs_AutoSellEverytime = false
 genv.ftgs_AutoSteal = false
-genv.ftgs_AutoWater = false
-genv.ftgs_AutoUnfavoriteAll = false
-genv.ftgs_AutoFavoriteAll = false
-genv.ftgs_AutoUnfavoriteSelect = false
-genv.ftgs_AutoFavoriteSelect = false
 genv.ftgs_AutoPlant = false
 genv.ftgs_AutoBuySeed = false
 genv.ftgs_AutoBuyAllSeed = false
@@ -957,15 +439,12 @@ genv.ftgs_AutoSendMail = false
 
 local selectedBuySeeds, selectedBuyGears = {}, {}
 local selectedPlantSeeds, selectedShovelSeeds, selectedSprinklers, selectedPets = { Carrot = true }, { Carrot = true }, { ["Super Sprinkler"] = true }, { Unicorn = true }
-local selectedWaterPlants, selectedHarvestOnly, selectedHarvestExcept, selectedFavoriteFruits = {}, {}, {}, {}
-local harvestMaxWeight = 0
 local mailUsername, mailSeedName, mailGearName = "", "Carrot", GearNames[1] or ""
 local mailSeedAmount, mailGearAmount, mailMessage = 1, 0, "NTMT HUB"
 local selectedFindPet = "Unicorn"
 local selectedUITheme = "Black"
 local desiredWalkSpeed, desiredJumpPower = 16, 50
-local webhookUrl, webhookIntervalMin, petShopWebhookUrl, inputJobId = "", 5, "", ""
-local lastPetShopStockHash = ""
+local webhookUrl, webhookIntervalMin, inputJobId = "", 5, ""
 
 local BoughtSeeds, BoughtGears, BoughtPets = {}, {}, {}
 local StolenFruits = {}
@@ -977,7 +456,7 @@ local trackedPlants, myUserId = {}, LocalPlayer.UserId
 local WildPetFolder, WildPetSpawns, SeedPackSpawns = nil, nil, nil
 local isCatchingPet, petCatchCooldown = false, {}
 local collectingMutation, petFindBusy = false, false
-local lastPlant, lastExpand, lastShovel, lastGear, lastPet, lastSellTry, lastSellEvery, lastWater, lastMailTime, lastFavoriteScan = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+local lastPlant, lastExpand, lastShovel, lastGear, lastPet, lastSellTry, lastMailTime = 0, 0, 0, 0, 0, 0, 0
 local isSendingMail = false
 local firedSet = {}
 local HARVEST_BATCH = 1
@@ -988,9 +467,7 @@ local function saveConfig()
         writefile(CONFIG_FILE, Services.HttpService:JSONEncode({
             webhookUrl = webhookUrl,
             webhookIntervalMin = webhookIntervalMin,
-            petShopWebhookUrl = petShopWebhookUrl,
             autoWebhook = genv.ftgs_AutoWebhook == true,
-            harvestMaxWeight = harvestMaxWeight,
             uiTheme = selectedUITheme,
             mailUsername = mailUsername,
             mailMessage = mailMessage,
@@ -1015,9 +492,7 @@ local function loadConfig()
     local ok, data = xpcall(function() return Services.HttpService:JSONDecode(readfile(CONFIG_FILE)) end, noopErr)
     if not ok or type(data) ~= "table" then return end
     if type(data.webhookUrl) == "string" then webhookUrl = data.webhookUrl end
-    if type(data.petShopWebhookUrl) == "string" then petShopWebhookUrl = data.petShopWebhookUrl end
     webhookIntervalMin = tonumber(data.webhookIntervalMin) or webhookIntervalMin
-    harvestMaxWeight = tonumber(data.harvestMaxWeight) or harvestMaxWeight
     if data.autoWebhook ~= nil then genv.ftgs_AutoWebhook = data.autoWebhook == true end
     if type(data.uiTheme) == "string" then selectedUITheme = data.uiTheme end
     if type(data.mailUsername) == "string" then mailUsername = data.mailUsername end
@@ -1162,25 +637,6 @@ end
 
 local function getGearStandPos(placePos)
     return placePos + Vector3.new(0, 3, 0)
-end
-
-local function quickTpAct(pos, fn)
-    movementBypass = true
-    tpInstant(pos)
-    task.wait(0.03)
-    local ok = true
-    if fn then ok = fn() ~= false end
-    movementBypass = false
-    return ok
-end
-
-local function isPosInPlantableArea(pos)
-    refreshOwnerPlot()
-    if not savedPlotCenter or not pos then return false end
-    local hx = (savedPlotSize and savedPlotSize.X or 44) / 2 + PLOT_EDGE_MARGIN
-    local hz = (savedPlotSize and savedPlotSize.Z or 44) / 2 + PLOT_EDGE_MARGIN
-    return math.abs(pos.X - savedPlotCenter.X) <= hx
-        and math.abs(pos.Z - savedPlotCenter.Z) <= hz
 end
 
 local function flySteps(from, to)
@@ -1420,80 +876,6 @@ local function getGearPrice(name)
     return (safeFlagGet(GearShopFlags and GearShopFlags.PriceOverrides))[name] or info.Cost or math.huge
 end
 
-local function initFavoriteRemotes()
-    local function walk(tbl)
-        if type(tbl) ~= "table" then return end
-        for k, v in pairs(tbl) do
-            if type(v) == "table" and type(v.Fire) == "function" then
-                local kn = string.lower(tostring(k))
-                if kn:find("favorite") or kn:find("favourite") then
-                    inventoryFavoriteRemote = v
-                    return
-                end
-            elseif type(v) == "table" then walk(v) end
-        end
-    end
-    walk(Net)
-end
-hubDefer(initFavoriteRemotes)
-
-local function foreachHarvestedFruit(fn)
-    local inv = PlayerReplica and PlayerReplica.Data and PlayerReplica.Data.Inventory
-    local bucket = inv and inv.HarvestedFruits
-    if type(bucket) ~= "table" then return end
-    for id, entry in pairs(bucket) do
-        if type(entry) == "table" then fn(id, entry) end
-    end
-end
-
-local function getFruitEntryName(entry)
-    return entry.FruitName or entry.Name or entry.PlantName or entry.SeedName
-end
-
-local function isFruitEntryFavorite(entry)
-    return entry.IsFavorite == true or entry.Favorite == true or entry.Favourited == true
-end
-
-local function setInventoryFavorite(id, entry, fav)
-    local fruitId = entry.Id or id
-    if inventoryFavoriteRemote then
-        safeNetCall(inventoryFavoriteRemote, fruitId, fav)
-        safeNetCall(inventoryFavoriteRemote, fruitId, fav and true or false)
-    end
-    for _, modName in ipairs({ "Inventory", "HarvestedFruits", "Fruit", "Harvest" }) do
-        local mod = Net[modName]
-        if type(mod) == "table" then
-            for _, rn in ipairs({ "SetFavorite", "SetFruitFavorite", "ToggleFavorite", "FavoriteFruit", "Favorite", "Unfavorite" }) do
-                local r = mod[rn]
-                if r and r.Fire then
-                    safeNetCall(r, fruitId, fav)
-                    safeNetCall(r, fruitId, fav and true or false)
-                end
-            end
-        end
-    end
-end
-
-local function tryAutoFavoriteActions()
-    if not (genv.ftgs_AutoFavoriteAll or genv.ftgs_AutoUnfavoriteAll
-        or genv.ftgs_AutoFavoriteSelect or genv.ftgs_AutoUnfavoriteSelect) then return end
-    if os.clock() - lastFavoriteScan < 0.35 then return end
-    lastFavoriteScan = os.clock()
-
-    local targetFav
-    local useSelect = false
-    if genv.ftgs_AutoFavoriteAll then targetFav = true
-    elseif genv.ftgs_AutoUnfavoriteAll then targetFav = false
-    elseif genv.ftgs_AutoFavoriteSelect and setHasAny(selectedFavoriteFruits) then targetFav, useSelect = true, true
-    elseif genv.ftgs_AutoUnfavoriteSelect and setHasAny(selectedFavoriteFruits) then targetFav, useSelect = false, true
-    else return end
-
-    foreachHarvestedFruit(function(id, entry)
-        local name = getFruitEntryName(entry)
-        if useSelect and not seedInSet(selectedFavoriteFruits, name) then return end
-        if isFruitEntryFavorite(entry) ~= targetFav then setInventoryFavorite(id, entry, targetFav) end
-    end)
-end
 local function normalizeSeedKey(name) return type(name) == "string" and string.gsub(name, "%s+", "") or name end
 local function seedNamesMatch(a, b) return a == b or normalizeSeedKey(a) == normalizeSeedKey(b) end
 
@@ -1618,23 +1000,14 @@ local function findEmptyGardenSpotNearPlayer()
             end
         end
     end
-    if not best then
-        for _, pos in plantAreas do
-            if isSpotEmpty(pos, occupied) and isPosInPlantableArea(pos) then
-                local d = flatDistXZ(pos, playerFlat)
-                if not bestDist or d < bestDist then best, bestDist = pos, d end
-            end
-        end
-    end
-    if not best then
+    if not best and isNearPlotForActions() then
         local hrp = getRoot()
         if hrp then
             local y = savedPlotCenter and savedPlotCenter.Y or hrp.Position.Y
             local feet = findPlantAreaPosition(hrp.Position) or Vector3.new(hrp.Position.X, y, hrp.Position.Z)
-            if isSpotEmpty(feet, occupied) and isPosInPlantableArea(feet) then best = feet end
+            if isSpotEmpty(feet, occupied) then best = feet end
         end
     end
-    if best and not isPosInPlantableArea(best) then return nil end
     return best
 end
 
@@ -1662,6 +1035,7 @@ local function findPlantAreaPosition(nearPos)
     return bestPos
 end
 
+
 local function isSprinklerSpotTaken(pos, plantKey)
     if plantKey and sprinkledPlantKeys[plantKey] then return true end
     for _, s in sprinkledSpots do
@@ -1679,12 +1053,12 @@ local function findBestSprinklerSpotNearPlayer()
     local function addCandidate(rawPos, seed, plantKey)
         if not rawPos or not seed then return end
         local spot = findPlantAreaPosition(rawPos) or rawPos
-        if not isPosInPlantableArea(spot) then return end
         if isSprinklerSpotTaken(spot, plantKey) then return end
         local dist = flatDistXZ(spot, playerFlat)
+        if dist > NEAR_PLAYER_DIST then return end
         local rank = getRarityRank(getSeedRarity(seed))
         local valueScore = (9 - math.min(rank, 8)) * 1000 + getSeedPrice(seed)
-        candidates[#candidates + 1] = { pos = spot, score = valueScore - dist * 5, plantKey = plantKey }
+        candidates[#candidates + 1] = { pos = spot, score = valueScore - dist * 20, plantKey = plantKey }
     end
 
     for plantId, pd in pairs(trackedPlants) do
@@ -1713,37 +1087,9 @@ local function findBestSprinklerSpotNearPlayer()
     if hrp then
         local y = savedPlotCenter and savedPlotCenter.Y or hrp.Position.Y
         local fallback = findPlantAreaPosition(hrp.Position) or Vector3.new(hrp.Position.X, y, hrp.Position.Z)
-        if isPosInPlantableArea(fallback) and not isSprinklerSpotTaken(fallback, nil) then return fallback end
+        if not isSprinklerSpotTaken(fallback, nil) then return fallback end
     end
     return nil
-end
-
-local function findWaterTargetPos()
-    refreshOwnerPlot()
-    local playerFlat = getPlayerFlatPos()
-    if not playerFlat or not setHasAny(selectedWaterPlants) then return nil end
-
-    local best, bestDist
-    local function consider(pos, seed)
-        if not pos or not seedInSet(selectedWaterPlants, seed) then return end
-        local spot = findPlantAreaPosition(pos) or pos
-        if not isPosInPlantableArea(spot) then return end
-        local d = flatDistXZ(spot, playerFlat)
-        if not bestDist or d < bestDist then best, bestDist = spot, d end
-    end
-
-    for _, pd in pairs(trackedPlants) do
-        consider(extractPlantDataPosition(pd), getPlantSeedName(pd))
-    end
-    local pf = OwnerPlot and OwnerPlot:FindFirstChild("Plants")
-    if pf then
-        for _, plant in pf:GetChildren() do
-            local seed = plant:GetAttribute("SeedName") or plant:GetAttribute("PlantName")
-            local part = plant.PrimaryPart or plant:FindFirstChildWhichIsA("BasePart", true)
-            if part then consider(part.Position, seed) end
-        end
-    end
-    return best
 end
 
 local function initMapFolders()
@@ -1793,50 +1139,16 @@ local function isDataReady(data)
     return maxAge <= 0 or age >= maxAge
 end
 
-local function getHarvestWeightKg(data)
-    if type(data) ~= "table" then return nil end
-    for _, key in ipairs({ "Weight", "FruitWeight", "weight", "Mass", "SizeKg" }) do
-        local w = data[key]
-        if type(w) == "number" and w > 0 then return w end
-    end
-    local size = data.SizeMulti or data.Size or data.FruitSize
-    if type(size) == "number" and size > 0 then return size end
-    return nil
-end
-
-local function shouldHarvestFruit(seedName, fruitData)
-    if not isDataReady(fruitData) then return false end
-    if setHasAny(selectedHarvestExcept) and seedInSet(selectedHarvestExcept, seedName) then return false end
-    if setHasAny(selectedHarvestOnly) and not seedInSet(selectedHarvestOnly, seedName) then return false end
-    if harvestMaxWeight > 0 then
-        local w = getHarvestWeightKg(fruitData)
-        if not w or w >= harvestMaxWeight then return false end
-    end
-    return true
-end
-
-local function shouldHarvestPlant(seedName, plantData)
-    if not isDataReady(plantData) then return false end
-    if setHasAny(selectedHarvestExcept) and seedInSet(selectedHarvestExcept, seedName) then return false end
-    if setHasAny(selectedHarvestOnly) and not seedInSet(selectedHarvestOnly, seedName) then return false end
-    if harvestMaxWeight > 0 then
-        local w = getHarvestWeightKg(plantData)
-        if not w or w >= harvestMaxWeight then return false end
-    end
-    return true
-end
-
 local function tryHarvestOne()
     if not genv.ftgs_AutoHarvest then return end
     local n = 0
     local now = os.clock()
     for plantId, plantData in pairs(trackedPlants) do
         if type(plantData) ~= "table" then continue end
-        local seedName = getPlantSeedName(plantData)
         local fruits = plantData.Fruits
         if type(fruits) == "table" then
             for fruitId, fruitData in pairs(fruits) do
-                if shouldHarvestFruit(seedName, fruitData) then
+                if isDataReady(fruitData) then
                     local key = tostring(plantId) .. "|" .. tostring(fruitId)
                     if not firedSet[key] and n < HARVEST_BATCH then
                         safeNetCall(Net.Garden and Net.Garden.CollectFruit, plantId, fruitId)
@@ -1846,7 +1158,7 @@ local function tryHarvestOne()
                 end
             end
         end
-        if shouldHarvestPlant(seedName, plantData) then
+        if isDataReady(plantData) then
             local key = tostring(plantId) .. "|_plant"
             if not firedSet[key] and n < HARVEST_BATCH then
                 safeNetCall(Net.Garden and Net.Garden.CollectFruit, plantId, "")
@@ -1905,27 +1217,19 @@ end
 local function tryAutoPlant()
     if not genv.ftgs_AutoPlant or plantingBusy or not setHasAny(selectedPlantSeeds) then return end
     if os.clock() - lastPlant < COOLDOWN.Plant then return end
+    if not isNearPlotForActions() then return end
     local seedName, tool = pickNextPlantSeed()
     if not tool then return end
     local pos = findEmptyGardenSpotNearPlayer()
-    if not pos or not isPosInPlantableArea(pos) then return end
+    if not pos then return end
     lastPlant = os.clock()
     plantingBusy = true
     task.spawn(function()
-        movementBypass = true
-        tpInstant(pos)
-        task.wait(0.06)
-        local hrp = getRoot()
-        if hrp then
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
-        end
         equipTool(tool)
         tool = findSeedToolByName(seedName) or tool
         safeNetCall(Net.Plant and Net.Plant.PlantSeed, pos, seedName, tool)
         if tool and type(tool.Activate) == "function" then xpcall(function() tool:Activate() end, noopErr) end
         task.wait(0.08)
-        movementBypass = false
         plantingBusy = false
     end)
 end
@@ -1933,58 +1237,23 @@ end
 local function trySprinkler()
     if not genv.ftgs_AutoSprinkler or sprinklerBusy then return end
     if os.clock() - lastGear < COOLDOWN.Gear then return end
+    if not isNearPlotForActions() then return end
     local plotId = LocalPlayer:GetAttribute("PlotId")
     if not plotId then return end
     local placePos, plantKey = findBestSprinklerSpotNearPlayer()
-    if not placePos or not isPosInPlantableArea(placePos) then return end
+    if not placePos then return end
     local spPriority = buildPriorityList(selectedSprinklers, SPRINKLER_LIST)
     local spTool, spName = findGearTool("Sprinkler", spPriority)
     if not spTool then return end
     lastGear = os.clock()
     sprinklerBusy = true
     task.spawn(function()
-        movementBypass = true
-        tpInstant(placePos)
-        task.wait(0.06)
-        local hrp = getRoot()
-        if hrp then
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.CFrame = CFrame.new(placePos + Vector3.new(0, 3, 0))
-        end
         equipTool(spTool)
         safeNetCall(Net.Place and Net.Place.PlaceSprinkler, placePos, spName, spTool, plotId)
         sprinkledSpots[#sprinkledSpots + 1] = placePos
         if plantKey then sprinkledPlantKeys[plantKey] = true end
         if #sprinkledSpots > 24 then table.remove(sprinkledSpots, 1) end
-        task.wait(0.05)
-        movementBypass = false
         sprinklerBusy = false
-    end)
-end
-
-local function tryAutoWater()
-    if not genv.ftgs_AutoWater or waterBusy or not setHasAny(selectedWaterPlants) then return end
-    if os.clock() - lastWater < COOLDOWN.Water then return end
-    local placePos = findWaterTargetPos()
-    if not placePos then return end
-    local canTool, canName = findGearTool("WateringCan", WATERING_CAN_LIST)
-    if not canTool then return end
-    lastWater = os.clock()
-    waterBusy = true
-    task.spawn(function()
-        movementBypass = true
-        tpInstant(placePos)
-        task.wait(0.06)
-        local hrp = getRoot()
-        if hrp then
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.CFrame = CFrame.new(placePos + Vector3.new(0, 3, 0))
-        end
-        equipTool(canTool)
-        safeNetCall(Net.WateringCan and Net.WateringCan.UseWateringCan, placePos - Vector3.new(0, 0.3, 0), canName, canTool)
-        task.wait(0.55)
-        movementBypass = false
-        waterBusy = false
     end)
 end
 
@@ -2315,87 +1584,6 @@ end
 
 -- ===== WEBHOOK / OTHER =====
 
-local function formatMmSs(totalSec)
-    totalSec = math.max(0, math.floor(totalSec))
-    return string.format("%dm%02ds", math.floor(totalSec / 60), totalSec % 60)
-end
-
-local function getPetExpireSeconds(ref, model)
-    local now = Services.Workspace:GetServerTimeNow()
-    for _, src in ipairs({ ref, model }) do
-        if src then
-            for _, attr in ipairs({ "DespawnTime", "ExpireTime", "DespawnAt", "ExpireAt", "EndTime" }) do
-                local v = src:GetAttribute(attr)
-                if type(v) == "number" and v > now then return v - now end
-            end
-        end
-    end
-    return 0
-end
-
-local function buildPetSpawnText()
-    initMapFolders()
-    local blocks = {}
-    if WildPetSpawns then
-        for _, model in WildPetSpawns:GetChildren() do
-            if not model:IsA("Model") then continue end
-            local ref = resolveRefFromModel(model)
-            local name = getPetDisplayName(model:GetAttribute("PetName"), model:GetAttribute("PetSize"))
-            local cost = ref and ref:GetAttribute("Price") or "?"
-            local remain = getPetExpireSeconds(ref, model)
-            blocks[#blocks + 1] = string.format("%s\n%s\nexpire in %s", name, tostring(cost), formatMmSs(remain))
-        end
-    end
-    return #blocks > 0 and table.concat(blocks, "\n\n") or "No wild pets on server"
-end
-
-local function getShopStockHash()
-    local parts = {}
-    for _, ch in StockItems:GetChildren() do
-        if ch:IsA("ValueBase") then parts[#parts + 1] = "S:" .. ch.Name .. ":" .. ch.Value end
-    end
-    for _, ch in GearStockItems:GetChildren() do
-        if ch:IsA("ValueBase") then parts[#parts + 1] = "G:" .. ch.Name .. ":" .. ch.Value end
-    end
-    table.sort(parts)
-    return table.concat(parts, "|")
-end
-
-local function buildPetShopWebhookEmbed()
-    return {
-        title = "NTMT HUB | Pet & Shop",
-        color = 0xFF4FD8,
-        fields = {
-            { name = "** PET SPAWN **", value = buildPetSpawnText(), inline = false },
-            { name = "** SEED SHOP STOCK **", value = buildSeedShopText(), inline = false },
-            { name = "** GEAR SHOP STOCK **", value = buildGearShopText(), inline = false },
-        },
-        footer = { text = "made by ntmthub - " .. DISCORD_LINK },
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-    }
-end
-
-local function sendPetShopWebhook()
-    if petShopWebhookUrl == "" then return end
-    httpPost(petShopWebhookUrl, Services.HttpService:JSONEncode({
-        username = "NTMT HUB",
-        embeds = { buildPetShopWebhookEmbed() },
-    }))
-end
-
-local function checkPetShopRestockWebhook()
-    if petShopWebhookUrl == "" then return end
-    local hash = getShopStockHash()
-    if lastPetShopStockHash == "" then
-        lastPetShopStockHash = hash
-        return
-    end
-    if hash ~= lastPetShopStockHash then
-        lastPetShopStockHash = hash
-        sendPetShopWebhook()
-    end
-end
-
 local function buildSeedShopText()
     local lines = {}
     for _, ch in ipairs(StockItems:GetChildren()) do
@@ -2449,13 +1637,6 @@ end
 local function sendWebhook()
     if webhookUrl == "" then return end
     httpPost(webhookUrl, Services.HttpService:JSONEncode({ username = "NTMT HUB", embeds = { buildWebhookEmbed() } }))
-end
-
-local function trySellEverytime()
-    if not genv.ftgs_AutoSellEverytime then return end
-    if os.clock() - lastSellEvery < COOLDOWN.SellEvery then return end
-    lastSellEvery = os.clock()
-    safeNetCall(Net.NPCS and Net.NPCS.SellAll)
 end
 
 local function trySellAll()
@@ -2579,85 +1760,24 @@ end
 
 -- ===== WINDUI =====
 
-local function dummyParagraph()
-    return { SetDesc = function() end, SetTitle = function() end }
-end
-
-local function dummyTab()
-    local tab = {}
-    local function noop() return tab end
-    tab.Section = noop
-    tab.Toggle = noop
-    tab.Button = noop
-    tab.Input = noop
-    tab.Slider = noop
-    tab.Dropdown = noop
-    tab.Paragraph = function() return dummyParagraph() end
-    return tab
-end
-
-local function safeTab(cfg)
-    if not Window or type(Window.Tab) ~= "function" then return dummyTab() end
-    local ok, tab = xpcall(function() return Window:Tab(cfg) end, noopErr)
-    if ok and tab then return tab end
-    return dummyTab()
-end
-
-local function tabCall(tab, method, ...)
-    if not tab or type(tab[method]) ~= "function" then return nil end
-    local args = { ... }
-    local unpackFn = table.unpack or unpack
-    local ok, res = xpcall(function() return tab[method](tab, unpackFn(args)) end, noopErr)
-    return ok and res or nil
-end
-
-setStep("M10 CreateWindow")
-publishWindUIGlobals()
-local Window
-do
-    local windowCfg = {
-        Title = "NTMT HUB | Grow a Garden 2",
-        Author = MADE_BY .. " | " .. Executor,
-        Folder = "ntmthub",
-        OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
-    }
-    local winOk, winOrErr = xpcall(function()
-        return WindUI:CreateWindow(windowCfg)
-    end, noopErr)
-    if winOk and winOrErr then
-        Window = winOrErr
-    else
-        hubWarn("CreateWindow failed:", tostring(winOrErr))
-        WindUI = createFallbackUI()
-        local ok2, win2 = xpcall(function()
-            return WindUI:CreateWindow({
-                Title = "NTMT HUB | Grow a Garden 2",
-                Author = MADE_BY .. " | " .. Executor,
-                Folder = "ntmthub",
-                OpenButton = { Title = "NTMT HUB", Enabled = true },
-            })
-        end, noopErr)
-        Window = ok2 and win2 or nil
-    end
-end
-if not Window or type(Window.Tab) ~= "function" then
-    hubWarn("UI failed — auto features still run (rejoin + re-execute if no button)")
-    Window = { Tab = function() return dummyTab() end, Tag = function() end }
-end
-setStep("M11 building tabs")
+local Window = WindUI:CreateWindow({
+    Title = "NTMT HUB | Grow a Garden 2",
+    Author = MADE_BY .. " | " .. Executor,
+    Folder = "ntmthub",
+    Icon = "sprout",
+    NewElements = true,
+    OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
+})
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.3", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.0.1", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
-
 applyUITheme(selectedUITheme)
 
 local function makeToggle(tab, title, desc, key)
-    if not tab or type(tab.Toggle) ~= "function" then return end
     tab:Toggle({ Title = title, Desc = desc, Default = genv[key] or false, Callback = function(s) genv[key] = s end })
 end
 
 local function multiDropdown(tab, title, values, selected, allowNone)
-    if not tab or type(tab.Dropdown) ~= "function" then return end
     tab:Dropdown({
         Title = title,
         Values = values,
@@ -2667,33 +1787,13 @@ local function multiDropdown(tab, title, values, selected, allowNone)
     })
 end
 
-local seedShopLive = dummyParagraph()
-local gearShopLive = dummyParagraph()
-local activePara = dummyParagraph()
-
-local tabsOk, tabsErr = xpcall(function()
-local MainTab = safeTab({ Title = "Main", Icon = "home" })
+local MainTab = Window:Tab({ Title = "Main", Icon = "home" })
 MainTab:Section({ Title = "Farm" })
-makeToggle(MainTab, "Auto Harvest", "Collect ripe fruit with filters", "ftgs_AutoHarvest")
-MainTab:Input({ Title = "Max harvest weight (kg)", Value = tostring(harvestMaxWeight), Placeholder = "0 = off, 100 = under 100kg", Callback = function(v)
-    harvestMaxWeight = math.max(0, tonumber(v) or 0)
-    saveConfig()
-end })
-multiDropdown(MainTab, "Collect only (plants)", PlantSeedNames, selectedHarvestOnly)
-multiDropdown(MainTab, "Except harvest (skip)", PlantSeedNames, selectedHarvestExcept)
+makeToggle(MainTab, "Auto Harvest", "Collect ripe fruit only", "ftgs_AutoHarvest")
 makeToggle(MainTab, "Auto Sell", "Sell when bag full", "ftgs_AutoSell")
-makeToggle(MainTab, "Auto Sell Everytime", "Sell continuously (0.01s)", "ftgs_AutoSellEverytime")
-makeToggle(MainTab, "Auto Water", "TP + water selected crops", "ftgs_AutoWater")
-multiDropdown(MainTab, "Water plants", PlantSeedNames, selectedWaterPlants)
 makeToggle(MainTab, "Auto Expand Garden", "Auto expand plot", "ftgs_AutoExpand")
-makeToggle(MainTab, "Auto Sprinkler", "TP + place on rare plants (no overlap)", "ftgs_AutoSprinkler")
+makeToggle(MainTab, "Auto Sprinkler", "Place on rare plants (no duplicate per plant)", "ftgs_AutoSprinkler")
 multiDropdown(MainTab, "Select Sprinklers", SPRINKLER_LIST, selectedSprinklers)
-MainTab:Section({ Title = "Favorite Fruit" })
-makeToggle(MainTab, "Auto Unfavorite All Fruit", "Unfavorite all in inventory", "ftgs_AutoUnfavoriteAll")
-makeToggle(MainTab, "Auto Favorite All Fruit", "Favorite all in inventory", "ftgs_AutoFavoriteAll")
-makeToggle(MainTab, "Auto Unfavorite Select", "Unfavorite selected fruit types", "ftgs_AutoUnfavoriteSelect")
-makeToggle(MainTab, "Auto Favorite Select", "Favorite selected fruit types", "ftgs_AutoFavoriteSelect")
-multiDropdown(MainTab, "Favorite fruit select", PlantSeedNames, selectedFavoriteFruits)
 MainTab:Section({ Title = "Auto Mail" })
 MainTab:Input({ Title = "Username", Value = mailUsername, Placeholder = "recipient username", Callback = function(v) mailUsername = v or "" saveConfig() end })
 makeToggle(MainTab, "Auto Send Mail", "Send seed/gear gifts", "ftgs_AutoSendMail")
@@ -2716,21 +1816,21 @@ MainTab:Input({ Title = "Mail message", Value = mailMessage, Placeholder = "mess
     saveConfig()
 end })
 
-local AutoTab = safeTab({ Title = "Automation", Icon = "bot" })
-makeToggle(AutoTab, "Auto Steal", "Quick TP fruit + steal", "ftgs_AutoSteal")
+local AutoTab = Window:Tab({ Title = "Automation", Icon = "bot" })
+makeToggle(AutoTab, "Auto Steal", "TP fruit -> hold still until stolen", "ftgs_AutoSteal")
 makeToggle(AutoTab, "Auto Collect Drops", "TP nearest drop + pickup", "ftgs_AutoCollectDrops")
 makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Slow fly rainbow/gold/mega", "ftgs_AutoCollectMutation")
-makeToggle(AutoTab, "Auto Plant", "TP + plant near you (+ edge margin)", "ftgs_AutoPlant")
+makeToggle(AutoTab, "Auto Plant", "Near you on plot (+ edge margin)", "ftgs_AutoPlant")
 multiDropdown(AutoTab, "Plant Seeds", PlantSeedNames, selectedPlantSeeds, false)
 makeToggle(AutoTab, "Auto Shovel", "Remove selected seed plants (batch)", "ftgs_AutoShovel")
-multiDropdown(AutoTab, "Shovel Seeds", PlantSeedNames, selectedShovelSeeds, false)
-makeToggle(AutoTab, "Auto Buy Pet", "Quick TP + tame pet", "ftgs_AutoBuyPet")
+multiDropdown(AutoTab, "Shovel Seeds", SeedNames, selectedShovelSeeds, false)
+makeToggle(AutoTab, "Auto Buy Pet", "Segmented fly + tame", "ftgs_AutoBuyPet")
 multiDropdown(AutoTab, "Select Pets", PET_LIST, selectedPets, false)
 
-local ShopTab = safeTab({ Title = "Shop", Icon = "shopping-cart" })
+local ShopTab = Window:Tab({ Title = "Shop", Icon = "shopping-cart" })
 makeToggle(ShopTab, "Auto Buy Seed", "Fast seed buy", "ftgs_AutoBuySeed")
 makeToggle(ShopTab, "Auto Buy All Seed", "Buy all in stock", "ftgs_AutoBuyAllSeed")
-tabCall(ShopTab, "Dropdown", { Title = "Select Seeds", Values = PlantSeedNames, Multi = true, AllowNone = true, Callback = function(sel)
+ShopTab:Dropdown({ Title = "Select Seeds", Values = PlantSeedNames, Multi = true, AllowNone = true, Callback = function(sel)
     table.clear(selectedBuySeeds)
     if type(sel) == "table" then for k, v in pairs(sel) do
         if type(v) == "string" then selectedBuySeeds[v] = true elseif type(k) == "string" and v then selectedBuySeeds[k] = true end
@@ -2738,45 +1838,41 @@ tabCall(ShopTab, "Dropdown", { Title = "Select Seeds", Values = PlantSeedNames, 
 end })
 makeToggle(ShopTab, "Auto Buy Gear", "Fast gear buy", "ftgs_AutoBuyGear")
 makeToggle(ShopTab, "Auto Buy All Gear", "Buy all in stock", "ftgs_AutoBuyAllGear")
-tabCall(ShopTab, "Dropdown", { Title = "Select Gears", Values = GearNames, Multi = true, AllowNone = true, Callback = function(sel)
+ShopTab:Dropdown({ Title = "Select Gears", Values = GearNames, Multi = true, AllowNone = true, Callback = function(sel)
     table.clear(selectedBuyGears)
     if type(sel) == "table" then for k, v in pairs(sel) do
         if type(v) == "string" then selectedBuyGears[v] = true elseif type(k) == "string" and v then selectedBuyGears[k] = true end
     end end
 end })
-tabCall(ShopTab, "Section", { Title = "Seed Shop (live)" })
-seedShopLive = tabCall(ShopTab, "Paragraph", { Title = "name | amount | price", Desc = "Loading..." }) or dummyParagraph()
-tabCall(ShopTab, "Section", { Title = "Gear Shop (live)" })
-gearShopLive = tabCall(ShopTab, "Paragraph", { Title = "name | amount | price", Desc = "Loading..." }) or dummyParagraph()
+ShopTab:Section({ Title = "Seed Shop (live)" })
+local seedShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
+ShopTab:Section({ Title = "Gear Shop (live)" })
+local gearShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
 
-local ServerTab = safeTab({ Title = "Server Hop", Icon = "globe" })
+local ServerTab = Window:Tab({ Title = "Server Hop", Icon = "globe" })
 makeToggle(ServerTab, "Auto Hop Server", "Hop every 30s", "ftgs_AutoHop")
-tabCall(ServerTab, "Button", { Title = "Hop Server (1 click)", Icon = "shuffle", Callback = function() hopToRandomServer() end })
-tabCall(ServerTab, "Button", { Title = "Rejoin Server", Icon = "refresh-cw", Callback = function()
+ServerTab:Button({ Title = "Hop Server (1 click)", Icon = "shuffle", Callback = function() hopToRandomServer() end })
+ServerTab:Button({ Title = "Rejoin Server", Icon = "refresh-cw", Callback = function()
     Services.TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
 end })
-tabCall(ServerTab, "Input", { Title = "Job ID", Value = "", Placeholder = "paste job id", Callback = function(v) inputJobId = v or "" end })
-tabCall(ServerTab, "Button", { Title = "Join Job ID (1 click)", Icon = "log-in", Callback = function()
+ServerTab:Input({ Title = "Job ID", Value = "", Placeholder = "paste job id", Callback = function(v) inputJobId = v or "" end })
+ServerTab:Button({ Title = "Join Job ID (1 click)", Icon = "log-in", Callback = function()
     if inputJobId ~= "" then Services.TeleportService:TeleportToPlaceInstance(game.PlaceId, inputJobId, LocalPlayer) end
 end })
-tabCall(ServerTab, "Section", { Title = "Auto Pet Finder" })
+ServerTab:Section({ Title = "Auto Pet Finder" })
 makeToggle(ServerTab, "Auto Find Pet", "Scan server first, then hop", "ftgs_AutoFindPet")
-tabCall(ServerTab, "Dropdown", { Title = "Pet to Find", Values = PET_LIST, Value = selectedFindPet, Callback = function(v)
+ServerTab:Dropdown({ Title = "Pet to Find", Values = PET_LIST, Value = selectedFindPet, Callback = function(v)
     if type(v) == "table" then v = v[1] end
     selectedFindPet = v or selectedFindPet
 end })
 
-local SettingsTab = safeTab({ Title = "Settings", Icon = "settings" })
+local SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings" })
 SettingsTab:Section({ Title = "UI Theme" })
 SettingsTab:Dropdown({ Title = "UI Color", Values = UI_THEME_NAMES, Value = selectedUITheme, Callback = function(v)
     if type(v) == "table" then v = v[1] end
     applyUITheme(v or selectedUITheme)
 end })
 SettingsTab:Input({ Title = "Webhook URL", Value = webhookUrl, Callback = function(v) webhookUrl = v or "" genv.ftgs_webhookUrl = webhookUrl saveConfig() end })
-SettingsTab:Input({ Title = "Webhook URL Pet and Shop", Value = petShopWebhookUrl, Placeholder = "optional - pet spawn + shop restock", Callback = function(v)
-    petShopWebhookUrl = v or ""
-    saveConfig()
-end })
 SettingsTab:Toggle({ Title = "Auto Notification", Desc = "Send webhook on interval", Default = genv.ftgs_AutoWebhook or false, Callback = function(s)
     genv.ftgs_AutoWebhook = s
     saveConfig()
@@ -2787,7 +1883,6 @@ SettingsTab:Input({ Title = "Notify every (minutes)", Value = tostring(webhookIn
     saveConfig()
 end })
 SettingsTab:Button({ Title = "Test Webhook", Icon = "send", Callback = function() sendWebhook() end })
-SettingsTab:Button({ Title = "Test Webhook Pet and Shop", Icon = "send", Callback = function() sendPetShopWebhook() end })
 SettingsTab:Button({ Title = "Redeem TEAMGREENBEAN", Icon = "gift", Callback = function()
     safeNetCall(Net.Settings and Net.Settings.SubmitCode, "TEAMGREENBEAN")
 end })
@@ -2796,7 +1891,7 @@ SettingsTab:Slider({ Title = "Jump Power", Step = 1, Value = { Min = 50, Max = 5
 makeToggle(SettingsTab, "Anti Hit", "No knockback from shovel", "ftgs_AntiHit")
 makeToggle(SettingsTab, "Anti Steal Guard", "Lock plot when intruder enters", "ftgs_AntiStealGuard")
 
-local InfoTab = safeTab({ Title = "Info", Icon = "info" })
+local InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
 InfoTab:Paragraph({ Title = "Discord", Desc = DISCORD_LINK })
 InfoTab:Button({ Title = "Copy Discord Link", Icon = "copy", Callback = function()
     if setclipboard then xpcall(setclipboard, noopErr, DISCORD_LINK) end
@@ -2804,14 +1899,11 @@ InfoTab:Button({ Title = "Copy Discord Link", Icon = "copy", Callback = function
 end })
 InfoTab:Paragraph({ Title = "Executor", Desc = Executor })
 InfoTab:Paragraph({ Title = "Roblox User", Desc = LocalPlayer.Name })
-activePara = tabCall(InfoTab, "Paragraph", { Title = "Active", Desc = "0h 00m 00s" }) or dummyParagraph()
-tabCall(InfoTab, "Paragraph", { Title = "Made by", Desc = MADE_BY })
-
-setStep("M12 tabs done")
-end, noopErr)
-if not tabsOk then hubWarn("Tab build error:", tostring(tabsErr)) end
+local activePara = InfoTab:Paragraph({ Title = "Active", Desc = "0h 00m 00s" })
+InfoTab:Paragraph({ Title = "Made by", Desc = MADE_BY })
 
 -- ===== LOOPS =====
+
 
 local function safeLoop(fn)
     xpcall(fn, noopErr)
@@ -2822,11 +1914,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while true do
-        if genv.ftgs_AutoSell then safeLoop(trySellAll) end
-        if genv.ftgs_AutoSellEverytime then safeLoop(trySellEverytime) end
-        task.wait(genv.ftgs_AutoSellEverytime and COOLDOWN.SellEvery or 0.5)
-    end
+    while true do if genv.ftgs_AutoSell then safeLoop(trySellAll) end task.wait(0.5) end
 end)
 
 task.spawn(function()
@@ -2867,10 +1955,8 @@ task.spawn(function()
         if genv.ftgs_AutoPlant then safeLoop(tryAutoPlant) end
         if genv.ftgs_AutoShovel then safeLoop(tryShovel) end
         if genv.ftgs_AutoSprinkler then safeLoop(trySprinkler) end
-        if genv.ftgs_AutoWater then safeLoop(tryAutoWater) end
         if genv.ftgs_AutoExpand then safeLoop(tryExpand) end
         if genv.ftgs_AutoSendMail then safeLoop(tryAutoMail) end
-        safeLoop(tryAutoFavoriteActions)
         task.wait(0.35)
     end
 end)
@@ -2889,7 +1975,6 @@ task.spawn(function()
         xpcall(function()
             if seedShopLive and type(seedShopLive.SetDesc) == "function" then seedShopLive:SetDesc(buildSeedShopText()) end
             if gearShopLive and type(gearShopLive.SetDesc) == "function" then gearShopLive:SetDesc(buildGearShopText()) end
-            checkPetShopRestockWebhook()
         end, noopErr)
     end
     task.wait(2)
@@ -3001,24 +2086,26 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v6.3] Loaded | " .. Executor)
-setStep("M99 loaded OK")
-pcall(function()
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "NTMT HUB",
-        Text = "Loaded! Click NTMT HUB button (left)",
-        Duration = 6,
-    })
-end)
+print("[NTMT HUB v6.0.1] Loaded | " .. Executor)
 
 end -- runMain
 
-local function bootHub()
+task.defer(function()
     local ok, err = xpcall(runMain, function(e)
         if debug and debug.traceback then return debug.traceback(tostring(e), 2) end
         return tostring(e)
     end)
-    if not ok then hubFatal("runMain", err) end
-end
-
-hubSpawn(bootHub)
+    if not ok then
+        warn("========================================")
+        warn("[NTMT HUB] SCRIPT CRASHED:")
+        warn(tostring(err))
+        warn("========================================")
+        pcall(function()
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "NTMT HUB Error",
+                Text = "Open F9 console for details",
+                Duration = 12,
+            })
+        end)
+    end
+end)
