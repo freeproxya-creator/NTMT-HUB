@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.0 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.0")
+--[[ NTMT HUB - Grow a Garden 2 v6.2 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.2")
 
 pcall(function()
     if delfile and isfile then
@@ -716,6 +716,8 @@ UI_THEMES = {
 }
 COOLDOWN = { Harvest = 0.01, Plant = 0.35, Buy = 0.01, Expand = 8, Sell = 0.5, Shovel = 0.25, Gear = 0.5, Pet = 0.12, Mail = 2, Water = 0.35 }
 PLANT_MIN_DIST = 3
+PLANT_CENTER_AVOID = 9
+PET_DEFEND_RADIUS = 28
 MUTATION_COLLECT_WAIT = 0.1
 SLOW_FLY_RATIO = 0.22
 PET_FIND_SCAN_SEC = 5
@@ -747,6 +749,10 @@ exceptHarvestPlants = {}
 collectOnlyPlants = {}
 harvestMaxWeight = 0
 stealSessionId = 0
+lastKnownMoveCF = nil
+favoriteRemote = nil
+favoriteRemotePath = nil
+favoriteRemoteMode = nil
 
 genv.ftgs_AutoHarvest = false
 genv.ftgs_AutoSell = false
@@ -764,6 +770,12 @@ genv.ftgs_AutoExpand = false
 genv.ftgs_AutoCollectDrops = false
 genv.ftgs_AutoCollectMutation = false
 genv.ftgs_AutoBuyPet = false
+genv.ftgs_AutoDefendPet = true
+genv.ftgs_AutoFavoriteSelect = false
+genv.ftgs_AutoUnfavoriteSelect = false
+genv.ftgs_AutoFavoriteAll = false
+genv.ftgs_AutoUnfavoriteAll = false
+genv.ftgs_BypassMovement = true
 genv.ftgs_AntiHit = false
 genv.ftgs_AntiStealGuard = false
 genv.ftgs_AutoHop = false
@@ -777,6 +789,7 @@ selectedPlantSeeds, selectedShovelSeeds, selectedSprinklers, selectedPets = { Ca
 mailUsername, mailSeedName, mailGearName = "", "Carrot", GearNames[1] or ""
 mailSeedAmount, mailGearAmount, mailMessage = 1, 0, "NTMT HUB"
 selectedFindPet = "Unicorn"
+selectedFavoriteFruit = SeedNames[1] or "Carrot"
 selectedUITheme = "Black"
 desiredWalkSpeed, desiredJumpPower = 16, 50
 webhookUrl, webhookIntervalMin, inputJobId = "", 5, ""
@@ -961,6 +974,129 @@ function hookGardenRemotes()
 end
 hookGardenRemotes()
 
+function initFavoriteRemotes()
+    if favoriteRemote then return favoriteRemote end
+    local function tryPath(path)
+        local node = Net
+        for seg in string.gmatch(path, "[^.]+") do
+            node = node and node[seg]
+        end
+        if node and (type(node.Fire) == "function" or type(node.InvokeServer) == "function") then
+            return node, path
+        end
+    end
+    local paths = {
+        "Inventory.ToggleFavorite",
+        "Inventory.SetFavorite",
+        "Inventory.FavoriteItem",
+        "Inventory.SetItemFavorite",
+        "Garden.ToggleFavorite",
+        "Garden.SetFavorite",
+        "Garden.SetFavoriteFruit",
+        "Favorites.Toggle",
+        "Favorites.SetFavorite",
+    }
+    for _, path in paths do
+        local remote, full = tryPath(path)
+        if remote then
+            favoriteRemote, favoriteRemotePath = remote, full
+            if string.find(path, "Toggle", 1, true) then
+                favoriteRemoteMode = "toggle"
+            else
+                favoriteRemoteMode = "set"
+            end
+            return remote
+        end
+    end
+    for _, desc in Services.ReplicatedStorage:GetDescendants() do
+        if (desc:IsA("RemoteEvent") or desc:IsA("RemoteFunction")) and string.find(desc.Name, "Favorite", 1, true) then
+            favoriteRemote = desc
+            favoriteRemotePath = desc:GetFullName()
+            favoriteRemoteMode = string.find(desc.Name, "Toggle", 1, true) and "toggle" or "set"
+            return desc
+        end
+    end
+    return nil
+end
+
+function getHarvestedFruitBucket()
+    if not PlayerReplica or not PlayerReplica.Data or not PlayerReplica.Data.Inventory then return nil end
+    return PlayerReplica.Data.Inventory.HarvestedFruits
+end
+
+function getHarvestedFruitName(entry)
+    if type(entry) ~= "table" then return nil end
+    return entry.FruitName or entry.Name or entry.CorePartName
+end
+
+function fruitEntryMatchesSelect(entry, fruitName)
+    local name = getHarvestedFruitName(entry)
+    return name and fruitName and seedNamesMatch(name, fruitName)
+end
+
+function setFruitFavoriteById(fruitId, entry, wantFavorite)
+    initFavoriteRemotes()
+    if not favoriteRemote or fruitId == nil then return false end
+    if type(entry) == "table" and entry.Favorite == wantFavorite then return false end
+    if favoriteRemoteMode == "toggle" then
+        if type(entry) == "table" and entry.Favorite == wantFavorite then return false end
+        return safeNetCall(favoriteRemote, fruitId)
+            or safeNetCall(favoriteRemote, "HarvestedFruits", fruitId)
+    end
+    return safeNetCall(favoriteRemote, fruitId, wantFavorite)
+        or safeNetCall(favoriteRemote, wantFavorite, fruitId)
+        or safeNetCall(favoriteRemote, "HarvestedFruits", fruitId, wantFavorite)
+        or safeNetCall(favoriteRemote, fruitId)
+end
+
+function tryFavoriteSelectedOnce()
+    if not genv.ftgs_AutoFavoriteSelect or not selectedFavoriteFruit then return end
+    local bucket = getHarvestedFruitBucket()
+    if type(bucket) ~= "table" then return end
+    for fruitId, entry in pairs(bucket) do
+        if type(entry) == "table" and fruitEntryMatchesSelect(entry, selectedFavoriteFruit) and entry.Favorite ~= true then
+            setFruitFavoriteById(fruitId, entry, true)
+            return
+        end
+    end
+end
+
+function tryUnfavoriteSelectedOnce()
+    if not genv.ftgs_AutoUnfavoriteSelect or not selectedFavoriteFruit then return end
+    local bucket = getHarvestedFruitBucket()
+    if type(bucket) ~= "table" then return end
+    for fruitId, entry in pairs(bucket) do
+        if type(entry) == "table" and fruitEntryMatchesSelect(entry, selectedFavoriteFruit) and entry.Favorite == true then
+            setFruitFavoriteById(fruitId, entry, false)
+            return
+        end
+    end
+end
+
+function tryFavoriteAllOnce()
+    if not genv.ftgs_AutoFavoriteAll then return end
+    local bucket = getHarvestedFruitBucket()
+    if type(bucket) ~= "table" then return end
+    for fruitId, entry in pairs(bucket) do
+        if type(entry) == "table" and entry.Favorite ~= true then
+            setFruitFavoriteById(fruitId, entry, true)
+            return
+        end
+    end
+end
+
+function tryUnfavoriteAllOnce()
+    if not genv.ftgs_AutoUnfavoriteAll then return end
+    local bucket = getHarvestedFruitBucket()
+    if type(bucket) ~= "table" then return end
+    for fruitId, entry in pairs(bucket) do
+        if type(entry) == "table" and entry.Favorite == true then
+            setFruitFavoriteById(fruitId, entry, false)
+            return
+        end
+    end
+end
+
 function tpInstant(pos)
     local hrp = getRoot()
     if not hrp or not pos then return false end
@@ -1052,6 +1188,80 @@ function instantTpOnce(pos)
     if not pos then return end
     tpInstant(pos)
     task.wait(0.012)
+end
+
+function stickToPosition(pos)
+    if not pos then return end
+    local hrp = getRoot()
+    local hum = getHumanoid()
+    if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+    end
+    if hum and isCatchingPet then hum.PlatformStand = true end
+end
+
+function getWildPetPosition(pick)
+    if not pick then return nil end
+    if pick.model and pick.model.Parent then
+        local root = pick.model.PrimaryPart or pick.model:FindFirstChild("RootPart") or pick.model:FindFirstChildWhichIsA("BasePart")
+        if root then return root.Position end
+    end
+    if pick.ref and pick.ref.Parent then return pick.ref.Position end
+    if pick.root and pick.root.Parent then return pick.root.Position end
+    return nil
+end
+
+function getPlayersNearPosition(pos, radius)
+    local out = {}
+    if not pos then return out end
+    for _, plr in Services.Players:GetPlayers() do
+        if plr ~= LocalPlayer and plr.Character then
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and (hrp.Position - pos).Magnitude <= radius then
+                out[#out + 1] = plr
+            end
+        end
+    end
+    table.sort(out, function(a, b)
+        local ah = a.Character and a.Character:FindFirstChild("HumanoidRootPart")
+        local bh = b.Character and b.Character:FindFirstChild("HumanoidRootPart")
+        if not ah or not bh then return false end
+        return (ah.Position - pos).Magnitude < (bh.Position - pos).Magnitude
+    end)
+    return out
+end
+
+function hitPlayerWithShovel(targetPlr)
+    if not targetPlr or not targetPlr.Character then return end
+    local shovel, shovelName = findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" })
+    if not shovel then return end
+    equipTool(shovel)
+    shovel = select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" })) or shovel
+    if type(shovel.Activate) == "function" then
+        for _ = 1, 4 do
+            xpcall(function() shovel:Activate() end, noopErr)
+            task.wait(0.025)
+        end
+    end
+    safeNetCall(Net.Shovel and Net.Shovel.HitPlayer, targetPlr.UserId, shovelName, shovel)
+    safeNetCall(Net.Actions and Net.Actions.ShovelHit, targetPlr)
+end
+
+function tryDefendPetAt(pos)
+    if not genv.ftgs_AutoDefendPet or not pos then return false end
+    local intruders = getPlayersNearPosition(pos, PET_DEFEND_RADIUS)
+    if #intruders == 0 then return false end
+    local target = intruders[1]
+    local thrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+    if not thrp then return false end
+    stickToPosition(thrp.Position)
+    task.wait(0.03)
+    hitPlayerWithShovel(target)
+    task.wait(0.04)
+    stickToPosition(pos)
+    return true
 end
 
 function getFruitWeightKg(fruitData)
@@ -1444,16 +1654,31 @@ function findPlantAreaPosition(nearPos)
     return bestPos
 end
 
+function isNearPlotCenter(pos)
+    refreshOwnerPlot()
+    if not savedPlotCenter or not pos then return false end
+    return flatDistXZ(pos, savedPlotCenter) < PLANT_CENTER_AVOID
+end
+
 function findNearestEmptySpotOnPlot()
     refreshOwnerPlot()
     if #plantAreas == 0 then refreshPlantAreas() end
     local playerFlat = getPlayerFlatPos()
     local occupied = getOccupiedPlantPositions()
     local best, bestDist
-    for _, pos in plantAreas do
-        if isSpotEmpty(pos, occupied) then
-            local d = playerFlat and flatDistXZ(pos, playerFlat) or 0
-            if not bestDist or d < bestDist then best, bestDist = pos, d end
+    local function consider(pos)
+        if not isSpotEmpty(pos, occupied) then return end
+        if isNearPlotCenter(pos) then return end
+        local d = playerFlat and flatDistXZ(pos, playerFlat) or 0
+        if not bestDist or d < bestDist then best, bestDist = pos, d end
+    end
+    for _, pos in plantAreas do consider(pos) end
+    if not best then
+        for _, pos in plantAreas do
+            if isSpotEmpty(pos, occupied) and flatDistXZ(pos, savedPlotCenter or pos) >= 5 then
+                local d = playerFlat and flatDistXZ(pos, playerFlat) or 0
+                if not bestDist or d < bestDist then best, bestDist = pos, d end
+            end
         end
     end
     return best
@@ -2051,8 +2276,6 @@ function tryBuyPet()
     lastPet = os.clock()
     isCatchingPet = true
     task.spawn(function()
-        local tpPart = pick.root or pick.ref
-        local tpPos = tpPart and tpPart.Position
         local prompt = (pick.model and pick.model:FindFirstChildWhichIsA("ProximityPrompt", true))
             or (pick.ref and pick.ref:FindFirstChildWhichIsA("ProximityPrompt", true))
         local tameRemote = Net.Pets and Net.Pets.WildPetTame
@@ -2061,8 +2284,8 @@ function tryBuyPet()
             if tameRemote then safeNetCall(tameRemote, pick.ref) end
         end
         movementBypass = true
-        if tpPos then instantTpOnce(tpPos) end
-        doTame()
+        gardenActionLock = true
+        local hum = getHumanoid()
         local done, conn = false, nil
         local tr = Net.Pets and Net.Pets.WildPetTameResult
         if tr and tr.OnClientEvent then
@@ -2070,12 +2293,19 @@ function tryBuyPet()
         end
         local deadline = os.clock() + 2.0
         while not done and os.clock() < deadline and genv.ftgs_AutoBuyPet do
+            local pos = getWildPetPosition(pick)
+            if pos then
+                stickToPosition(pos)
+                if genv.ftgs_AutoDefendPet then tryDefendPetAt(pos) end
+            end
             doTame()
-            task.wait(0.018)
+            task.wait(0.015)
         end
         if conn then conn:Disconnect() end
         if done then trackPetBuy(getPetDisplayName(pick.species, nil), pick.price) end
+        if hum then hum.PlatformStand = false end
         movementBypass = false
+        gardenActionLock = false
         isCatchingPet = false
     end)
 end
@@ -2325,7 +2555,7 @@ Window = WindUI:CreateWindow({
     OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
 })
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.0", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.2", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
 
@@ -2353,6 +2583,15 @@ multiDropdown(MainTab, "Except Harvest", SeedNames, exceptHarvestPlants, true)
 multiDropdown(MainTab, "Collect Only", SeedNames, collectOnlyPlants, true)
 makeToggle(MainTab, "Auto Sell", "Sell when bag full", "ftgs_AutoSell")
 makeToggle(MainTab, "Auto Sell Everytime", "Sell loop 0.01s", "ftgs_AutoSellEverytime")
+MainTab:Section({ Title = "Favorite Fruits" })
+MainTab:Dropdown({ Title = "Select Fruit", Values = SeedNames, Value = selectedFavoriteFruit, Callback = function(v)
+    if type(v) == "table" then v = v[1] end
+    selectedFavoriteFruit = v or selectedFavoriteFruit
+end })
+makeToggle(MainTab, "Auto Favorite Fruit", "0.01s per fruit (selected)", "ftgs_AutoFavoriteSelect")
+makeToggle(MainTab, "Auto Unfavorite Fruit", "0.01s per fruit (selected)", "ftgs_AutoUnfavoriteSelect")
+makeToggle(MainTab, "Auto Favorite All", "0.01s per fruit", "ftgs_AutoFavoriteAll")
+makeToggle(MainTab, "Auto Unfavorite All", "0.01s per fruit", "ftgs_AutoUnfavoriteAll")
 makeToggle(MainTab, "Auto Expand Garden", "Auto expand plot", "ftgs_AutoExpand")
 makeToggle(MainTab, "Auto Sprinkler", "TP to plant then place (no duplicate per plant)", "ftgs_AutoSprinkler")
 multiDropdown(MainTab, "Select Sprinklers", SPRINKLER_LIST, selectedSprinklers)
@@ -2387,11 +2626,12 @@ AutoTab:Toggle({ Title = "Auto Steal", Desc = "Fast steal 3 -> garden -> next (o
 end })
 makeToggle(AutoTab, "Auto Collect Drops", "TP nearest drop + pickup", "ftgs_AutoCollectDrops")
 makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Instant TP + claim (2s)", "ftgs_AutoCollectMutation")
-makeToggle(AutoTab, "Auto Plant", "Remote plant — walk freely", "ftgs_AutoPlant")
+makeToggle(AutoTab, "Auto Plant", "Remote plant — skip garden center", "ftgs_AutoPlant")
 multiDropdown(AutoTab, "Plant Seeds", PlantSeedNames, selectedPlantSeeds, false)
 makeToggle(AutoTab, "Auto Shovel", "Remove selected seed plants (batch)", "ftgs_AutoShovel")
 multiDropdown(AutoTab, "Shovel Seeds", SeedNames, selectedShovelSeeds, false)
-makeToggle(AutoTab, "Auto Buy Pet", "Instant TP + tame in 2s", "ftgs_AutoBuyPet")
+makeToggle(AutoTab, "Auto Buy Pet", "Follow pet + tame 2s + defend", "ftgs_AutoBuyPet")
+makeToggle(AutoTab, "Auto Defend Pet", "Shovel intruders near pet while taming", "ftgs_AutoDefendPet")
 multiDropdown(AutoTab, "Select Pets", PET_LIST, selectedPets, false)
 
 ShopTab = Window:Tab({ Title = "Shop", Icon = "shopping-cart" })
@@ -2455,7 +2695,8 @@ SettingsTab:Button({ Title = "Redeem TEAMGREENBEAN", Icon = "gift", Callback = f
 end })
 SettingsTab:Slider({ Title = "Walk Speed", Step = 1, Value = { Min = 16, Max = 250, Default = 16 }, Callback = function(v) desiredWalkSpeed = v applyMovement() end })
 SettingsTab:Slider({ Title = "Jump Power", Step = 1, Value = { Min = 50, Max = 500, Default = 50 }, Callback = function(v) desiredJumpPower = v applyMovement() end })
-makeToggle(SettingsTab, "Anti Hit", "No knockback from shovel", "ftgs_AntiHit")
+makeToggle(SettingsTab, "Bypass Movement AC", "Stop rubber-band TP when high walkspeed", "ftgs_BypassMovement")
+makeToggle(SettingsTab, "Anti Hit", "No knockback from shovel (garden snap if bypass off)", "ftgs_AntiHit")
 makeToggle(SettingsTab, "Anti Steal Guard", "Lock plot when intruder enters", "ftgs_AntiStealGuard")
 
 InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
@@ -2486,6 +2727,16 @@ end)
 
 task.spawn(function()
     while true do if genv.ftgs_AutoSellEverytime then safeLoop(trySellEverytime) end task.wait(0.01) end
+end)
+
+task.spawn(function()
+    while true do
+        if genv.ftgs_AutoFavoriteSelect then safeLoop(tryFavoriteSelectedOnce) end
+        if genv.ftgs_AutoUnfavoriteSelect then safeLoop(tryUnfavoriteSelectedOnce) end
+        if genv.ftgs_AutoFavoriteAll then safeLoop(tryFavoriteAllOnce) end
+        if genv.ftgs_AutoUnfavoriteAll then safeLoop(tryUnfavoriteAllOnce) end
+        task.wait(0.01)
+    end
 end)
 
 task.spawn(function()
@@ -2579,15 +2830,55 @@ task.spawn(function()
 end)
 
 task.spawn(function()
+    Services.RunService.Heartbeat:Connect(function()
+        if not genv.ftgs_BypassMovement then return end
+        if movementBypass or gardenActionLock or stealBusy or isCatchingPet then return end
+        local hrp = getRoot()
+        local hum = getHumanoid()
+        if not hrp or not hum then return end
+        if hum.MoveDirection.Magnitude > 0.05 or desiredWalkSpeed > 16 then
+            lastKnownMoveCF = hrp.CFrame
+        end
+    end)
+end)
+
+task.spawn(function()
+    while true do
+        if genv.ftgs_BypassMovement and not movementBypass and not gardenActionLock and not isCatchingPet and not stealBusy then
+            local hrp = getRoot()
+            local hum = getHumanoid()
+            if hrp and hum and lastKnownMoveCF and hum.MoveDirection.Magnitude > 0.08 then
+                local snap = (hrp.Position - lastKnownMoveCF.Position).Magnitude
+                if snap > 10 then
+                    hrp.CFrame = lastKnownMoveCF
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    hrp.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+        end
+        task.wait(0.03)
+    end
+end)
+
+task.spawn(function()
     while true do
         if genv.ftgs_AntiStealGuard and not gardenActionLock and not stealBusy then safeLoop(tryAntiStealGuard) end
-        if genv.ftgs_AntiHit and not movementBypass and not gardenActionLock and not isCatchingPet and not collectingMutation
+        if genv.ftgs_AntiHit and not genv.ftgs_BypassMovement and not movementBypass and not gardenActionLock and not isCatchingPet and not collectingMutation
             and not plantingBusy and not sprinklerBusy and not shovelBusy and not stealBusy and not wateringBusy then
             local hrp, cf = getRoot(), getPlotCenterCFrame()
             if hrp and cf and not isInGardenActionRange() and (hrp.Position - cf.Position).Magnitude > 90 then
                 hrp.AssemblyLinearVelocity = Vector3.zero
                 hrp.AssemblyAngularVelocity = Vector3.zero
                 hrp.CFrame = cf
+            end
+        elseif genv.ftgs_AntiHit and genv.ftgs_BypassMovement and not movementBypass and not gardenActionLock then
+            local hrp, hum = getRoot(), getHumanoid()
+            if hrp and hum and hum:GetState() == Enum.HumanoidStateType.Physics then
+                local vel = hrp.AssemblyLinearVelocity
+                if vel.Magnitude > 80 then
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    hrp.AssemblyAngularVelocity = Vector3.zero
+                end
             end
         end
         task.wait(0.08)
