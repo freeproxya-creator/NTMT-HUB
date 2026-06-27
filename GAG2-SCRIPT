@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.6 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.6")
+--[[ NTMT HUB - Grow a Garden 2 v6.6.1 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.6.1")
 
 pcall(function()
     if delfile and isfile then
@@ -193,6 +193,7 @@ local function createBuiltinWindUI()
 
     local sg = Instance.new("ScreenGui")
     sg.Name = "NTMTHubUI"
+    sg:SetAttribute("NTMTHubUI", true)
     sg.ResetOnSpawn = false
     sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     sg.Parent = pg
@@ -493,8 +494,14 @@ local function safeNetCall(remote, ...)
     if type(remote.Fire) == "function" then
         return select(1, xpcall(function() remote:Fire(table.unpack(args)) end, noopErr))
     end
+    if type(remote.FireServer) == "function" then
+        return select(1, xpcall(function() remote:FireServer(table.unpack(args)) end, noopErr))
+    end
     if type(remote.InvokeServer) == "function" then
         return select(1, xpcall(function() return remote:InvokeServer(table.unpack(args)) end, noopErr))
+    end
+    if type(remote.Invoke) == "function" then
+        return select(1, xpcall(function() return remote:Invoke(table.unpack(args)) end, noopErr))
     end
     return false
 end
@@ -676,6 +683,7 @@ function safeRequire(mod)
 end
 Net = safeRequire(Shared:WaitForChild("Networking"))
 if not Net then hubWarn("Networking module failed") return end
+task.defer(function() xpcall(initFavoriteRemotes, noopErr) end)
 SeedData = safeRequire(Shared:WaitForChild("SeedData"))
 SeedShopFlags = safeRequire(Shared.Flags:WaitForChild("SeedShopFlags"))
 GearShopData = safeRequire(Shared:WaitForChild("GearShopData"))
@@ -752,7 +760,8 @@ UI_THEMES = {
 COOLDOWN = { Harvest = 0.01, Plant = 0.35, Buy = 0.01, Expand = 8, Sell = 0.5, Shovel = 0.25, Gear = 0.5, Pet = 0.12, Mail = 2, Water = 0.35 }
 PLANT_MIN_DIST = 3
 PLANT_CENTER_AVOID = 9
-PET_DEFEND_RADIUS = 55
+PET_DEFEND_RADIUS = 28
+PET_DEFEND_PLAYER_RANGE = 32
 MUTATION_COLLECT_WAIT = 0.1
 SLOW_FLY_RATIO = 0.22
 PET_FIND_SCAN_SEC = 5
@@ -805,7 +814,7 @@ genv.ftgs_AutoExpand = false
 genv.ftgs_AutoCollectDrops = false
 genv.ftgs_AutoCollectMutation = false
 genv.ftgs_AutoBuyPet = false
-genv.ftgs_AutoDefendPet = true
+genv.ftgs_AutoDefendPet = false
 genv.ftgs_AutoFavoriteSelect = false
 genv.ftgs_AutoUnfavoriteSelect = false
 genv.ftgs_AutoFavoriteAll = false
@@ -888,6 +897,7 @@ plantAreas, savedPlantPositions = {}, {}
 trackedPlants, myUserId = {}, LocalPlayer.UserId
 WildPetFolder, WildPetSpawns, SeedPackSpawns = nil, nil, nil
 isCatchingPet, petCatchCooldown = false, {}
+activeDefendPetPos = nil
 collectingMutation, petFindBusy = false, false
 lastPlant, lastExpand, lastShovel, lastGear, lastPet, lastSellTry, lastMailTime = 0, 0, 0, 0, 0, 0, 0
 isSendingMail = false
@@ -1078,37 +1088,64 @@ hookGardenRemotes()
 
 function initFavoriteRemotes()
     if favoriteRemote then return favoriteRemote end
+    local function isRemote(node)
+        return node and (type(node.Fire) == "function" or type(node.InvokeServer) == "function")
+    end
     local function tryPath(path)
         local node = Net
         for seg in string.gmatch(path, "[^.]+") do
             node = node and node[seg]
         end
-        if node and (type(node.Fire) == "function" or type(node.InvokeServer) == "function") then
-            return node, path
+        if isRemote(node) then return node, path end
+    end
+    local function scanNet(node, path, out)
+        if type(node) ~= "table" or isRemote(node) then return end
+        for k, v in node do
+            if type(k) == "string" then
+                local nextPath = path == "" and k or (path .. "." .. k)
+                if isRemote(v) then
+                    if string.find(string.lower(k), "favorite", 1, true) then
+                        out[#out + 1] = { remote = v, path = nextPath, score = 0 }
+                    end
+                else
+                    scanNet(v, nextPath, out)
+                end
+            end
         end
     end
     local paths = {
+        "Inventory.ToggleHarvestedFruitFavorite",
+        "Inventory.SetHarvestedFruitFavorite",
         "Inventory.ToggleFavorite",
         "Inventory.SetFavorite",
         "Inventory.FavoriteItem",
         "Inventory.SetItemFavorite",
-        "Garden.ToggleFavorite",
-        "Garden.SetFavorite",
-        "Garden.SetFavoriteFruit",
+        "Inventory.FavoriteHarvestedFruit",
+        "Favorites.ToggleHarvestedFruit",
+        "Favorites.SetHarvestedFruitFavorite",
         "Favorites.Toggle",
         "Favorites.SetFavorite",
+        "Garden.ToggleFavorite",
+        "Garden.SetFavorite",
     }
+    local found = {}
     for _, path in paths do
         local remote, full = tryPath(path)
-        if remote then
-            favoriteRemote, favoriteRemotePath = remote, full
-            if string.find(path, "Toggle", 1, true) then
-                favoriteRemoteMode = "toggle"
-            else
-                favoriteRemoteMode = "set"
-            end
-            return remote
-        end
+        if remote then found[#found + 1] = { remote = remote, path = full, score = 100 } end
+    end
+    scanNet(Net, "", found)
+    for _, item in found do
+        local p = string.lower(item.path or "")
+        if string.find(p, "inventory", 1, true) then item.score += 50 end
+        if string.find(p, "harvest", 1, true) then item.score += 40 end
+        if string.find(p, "toggle", 1, true) then item.score += 10 end
+    end
+    table.sort(found, function(a, b) return (a.score or 0) > (b.score or 0) end)
+    if found[1] then
+        favoriteRemote = found[1].remote
+        favoriteRemotePath = found[1].path
+        favoriteRemoteMode = string.find(string.lower(favoriteRemotePath or ""), "toggle", 1, true) and "toggle" or "set"
+        return favoriteRemote
     end
     for _, desc in Services.ReplicatedStorage:GetDescendants() do
         if (desc:IsA("RemoteEvent") or desc:IsA("RemoteFunction")) and string.find(desc.Name, "Favorite", 1, true) then
@@ -1128,7 +1165,20 @@ end
 
 function getHarvestedFruitName(entry)
     if type(entry) ~= "table" then return nil end
-    return entry.FruitName or entry.Name or entry.CorePartName
+    return entry.FruitName or entry.Name or entry.CorePartName or entry.PlantName
+end
+
+function getHarvestedFruitId(key, entry)
+    if type(entry) == "table" then
+        return entry.Id or entry.FruitId or entry.UUID or entry.ItemId or key
+    end
+    return key
+end
+
+function isFruitFavorited(entry)
+    if type(entry) ~= "table" then return false end
+    return entry.Favorite == true or entry.IsFavorite == true or entry.Favorited == true
+        or entry.Starred == true or entry.IsFavorited == true
 end
 
 function fruitEntryMatchesSelect(entry, fruitName)
@@ -1136,28 +1186,42 @@ function fruitEntryMatchesSelect(entry, fruitName)
     return name and fruitName and seedNamesMatch(name, fruitName)
 end
 
+function fireFavoriteRemote(remote, fruitId, wantFavorite)
+    if not remote or fruitId == nil then return false end
+    local tries = {
+        function() return safeNetCall(remote, "HarvestedFruits", fruitId) end,
+        function() return safeNetCall(remote, fruitId) end,
+        function() return safeNetCall(remote, "HarvestedFruits", fruitId, wantFavorite) end,
+        function() return safeNetCall(remote, fruitId, wantFavorite) end,
+        function() return safeNetCall(remote, wantFavorite, fruitId) end,
+        function() return safeNetCall(remote, "HarvestedFruits", tostring(fruitId), wantFavorite) end,
+        function() return safeNetCall(remote, tostring(fruitId), wantFavorite) end,
+        function() return safeNetCall(remote, "HarvestedFruits", fruitId, wantFavorite and true or false) end,
+        function() return safeNetCall(remote, { Id = fruitId, Favorite = wantFavorite }) end,
+        function() return safeNetCall(remote, "HarvestedFruits", { Id = fruitId, Favorite = wantFavorite }) end,
+    }
+    for _, fn in tries do
+        if fn() then return true end
+    end
+    return false
+end
+
 function setFruitFavoriteById(fruitId, entry, wantFavorite)
     initFavoriteRemotes()
     if not favoriteRemote or fruitId == nil then return false end
-    if type(entry) == "table" and entry.Favorite == wantFavorite then return false end
+    if isFruitFavorited(entry) == wantFavorite then return false end
     if favoriteRemoteMode == "toggle" then
-        if type(entry) == "table" and entry.Favorite == wantFavorite then return false end
-        return safeNetCall(favoriteRemote, fruitId)
-            or safeNetCall(favoriteRemote, "HarvestedFruits", fruitId)
+        if isFruitFavorited(entry) == wantFavorite then return false end
+        return fireFavoriteRemote(favoriteRemote, fruitId, wantFavorite)
     end
-    return safeNetCall(favoriteRemote, fruitId, wantFavorite)
-        or safeNetCall(favoriteRemote, wantFavorite, fruitId)
-        or safeNetCall(favoriteRemote, "HarvestedFruits", fruitId, wantFavorite)
-        or safeNetCall(favoriteRemote, fruitId)
+    return fireFavoriteRemote(favoriteRemote, fruitId, wantFavorite)
 end
 
 function tryFavoriteSelectedOnce()
     if not genv.ftgs_AutoFavoriteSelect or not selectedFavoriteFruit then return end
-    local bucket = getHarvestedFruitBucket()
-    if type(bucket) ~= "table" then return end
-    for fruitId, entry in pairs(bucket) do
-        if type(entry) == "table" and fruitEntryMatchesSelect(entry, selectedFavoriteFruit) and entry.Favorite ~= true then
-            setFruitFavoriteById(fruitId, entry, true)
+    for fruitId, entry in pairs(getHarvestedFruitBucket() or {}) do
+        if type(entry) == "table" and fruitEntryMatchesSelect(entry, selectedFavoriteFruit) and not isFruitFavorited(entry) then
+            setFruitFavoriteById(getHarvestedFruitId(fruitId, entry), entry, true)
             return
         end
     end
@@ -1165,11 +1229,9 @@ end
 
 function tryUnfavoriteSelectedOnce()
     if not genv.ftgs_AutoUnfavoriteSelect or not selectedFavoriteFruit then return end
-    local bucket = getHarvestedFruitBucket()
-    if type(bucket) ~= "table" then return end
-    for fruitId, entry in pairs(bucket) do
-        if type(entry) == "table" and fruitEntryMatchesSelect(entry, selectedFavoriteFruit) and entry.Favorite == true then
-            setFruitFavoriteById(fruitId, entry, false)
+    for fruitId, entry in pairs(getHarvestedFruitBucket() or {}) do
+        if type(entry) == "table" and fruitEntryMatchesSelect(entry, selectedFavoriteFruit) and isFruitFavorited(entry) then
+            setFruitFavoriteById(getHarvestedFruitId(fruitId, entry), entry, false)
             return
         end
     end
@@ -1177,11 +1239,9 @@ end
 
 function tryFavoriteAllOnce()
     if not genv.ftgs_AutoFavoriteAll then return end
-    local bucket = getHarvestedFruitBucket()
-    if type(bucket) ~= "table" then return end
-    for fruitId, entry in pairs(bucket) do
-        if type(entry) == "table" and entry.Favorite ~= true then
-            setFruitFavoriteById(fruitId, entry, true)
+    for fruitId, entry in pairs(getHarvestedFruitBucket() or {}) do
+        if type(entry) == "table" and not isFruitFavorited(entry) then
+            setFruitFavoriteById(getHarvestedFruitId(fruitId, entry), entry, true)
             return
         end
     end
@@ -1189,11 +1249,9 @@ end
 
 function tryUnfavoriteAllOnce()
     if not genv.ftgs_AutoUnfavoriteAll then return end
-    local bucket = getHarvestedFruitBucket()
-    if type(bucket) ~= "table" then return end
-    for fruitId, entry in pairs(bucket) do
-        if type(entry) == "table" and entry.Favorite == true then
-            setFruitFavoriteById(fruitId, entry, false)
+    for fruitId, entry in pairs(getHarvestedFruitBucket() or {}) do
+        if type(entry) == "table" and isFruitFavorited(entry) then
+            setFruitFavoriteById(getHarvestedFruitId(fruitId, entry), entry, false)
             return
         end
     end
@@ -1316,27 +1374,11 @@ function findShovelTool()
     return scan(LocalPlayer.Character) or scan(LocalPlayer:FindFirstChild("Backpack"))
 end
 
-function getNearestDefendPetPosition()
-    initMapFolders()
-    if not WildPetSpawns then return nil end
+function shouldDefendPetAt(pos)
+    if not genv.ftgs_AutoDefendPet or not pos or not isCatchingPet then return false end
     local myHrp = getRoot()
-    local myPos = myHrp and myHrp.Position
-    local bestPos, bestScore = nil, math.huge
-    for _, model in WildPetSpawns:GetChildren() do
-        if not model:IsA("Model") then continue end
-        local ref = resolveRefFromModel(model)
-        if not ref then continue end
-        local pos = getWildPetPosition({ model = model, ref = ref, root = model.PrimaryPart })
-        if not pos then continue end
-        local score = myPos and (myPos - pos).Magnitude or 0
-        local ownerId = ref:GetAttribute("OwnerUserId")
-        if ownerId == LocalPlayer.UserId then score -= 100000 end
-        if score < bestScore then
-            bestScore = score
-            bestPos = pos
-        end
-    end
-    return bestPos
+    if not myHrp then return false end
+    return (myHrp.Position - pos).Magnitude <= PET_DEFEND_PLAYER_RANGE
 end
 
 function getWildPetPosition(pick)
@@ -2542,6 +2584,7 @@ function tryBuyPet()
     petCatchCooldown[key] = os.clock()
     lastPet = os.clock()
     isCatchingPet = true
+    activeDefendPetPos = nil
     task.spawn(function()
         local prompt = (pick.model and pick.model:FindFirstChildWhichIsA("ProximityPrompt", true))
             or (pick.ref and pick.ref:FindFirstChildWhichIsA("ProximityPrompt", true))
@@ -2562,13 +2605,15 @@ function tryBuyPet()
         while not done and os.clock() < deadline and genv.ftgs_AutoBuyPet do
             local pos = getWildPetPosition(pick)
             if pos then
+                activeDefendPetPos = pos
                 stickToPosition(pos)
-                if genv.ftgs_AutoDefendPet then attackNearbyIntruders(pos) end
+                if shouldDefendPetAt(pos) then attackNearbyIntruders(pos) end
             end
             doTame()
             task.wait(0.012)
         end
         restoreAllHitboxes()
+        activeDefendPetPos = nil
         if conn then conn:Disconnect() end
         if done then trackPetBuy(getPetDisplayName(pick.species, nil), pick.price) end
         if hum then hum.PlatformStand = false end
@@ -2962,13 +3007,57 @@ function setupHubUiTranslationWatcher()
     LocalPlayer.PlayerGui.ChildAdded:Connect(function(ch) task.defer(function() watchSg(ch) end) end)
 end
 
+function resolveThemeImageAsset(url, themeName)
+    if not url or url == "" then return nil end
+    if string.find(url, "rbxasset", 1, true) then return url end
+    if writefile and isfile and getcustomasset then
+        local fileName = "ntmthub/bg_" .. tostring(themeName or "theme") .. ".png"
+        if not isfile(fileName) then
+            local body = universalHttpGet(url)
+            if type(body) == "string" and #body > 128 then
+                pcall(function()
+                    if makefolder then pcall(makefolder, "ntmthub") end
+                    writefile(fileName, body)
+                end)
+            end
+        end
+        if isfile(fileName) then
+            local ok, asset = pcall(getcustomasset, fileName)
+            if ok and type(asset) == "string" and asset ~= "" then return asset end
+        end
+    end
+    return url
+end
+
+function estimateFrameArea(frame)
+    if not frame or not frame:IsA("GuiObject") then return 0 end
+    local sz = frame.AbsoluteSize
+    local area = sz.X * sz.Y
+    if area > 0 then return area end
+    local cam = workspace.CurrentCamera
+    if not cam then return 0 end
+    local vx = frame.Size.X.Offset + frame.Size.X.Scale * cam.ViewportSize.X
+    local vy = frame.Size.Y.Offset + frame.Size.Y.Scale * cam.ViewportSize.Y
+    return vx * vy
+end
+
 function findHubBackgroundHost()
+    markHubScreenGuis()
+    local preferred = { "Main", "Window", "Background", "Container", "Root", "Content", "Panel" }
+    for sg in hubScreenGuis do
+        if sg.Parent then
+            for _, name in preferred do
+                local hit = sg:FindFirstChild(name, true)
+                if hit and hit:IsA("Frame") then return hit end
+            end
+        end
+    end
     local bestFrame, bestArea = nil, 0
     for sg in hubScreenGuis do
         if sg.Parent then
             for _, d in sg:GetDescendants() do
-                if d:IsA("Frame") and d.Visible then
-                    local area = d.AbsoluteSize.X * d.AbsoluteSize.Y
+                if d:IsA("Frame") and d.Name ~= "NTMT_BG" then
+                    local area = estimateFrameArea(d)
                     if area > bestArea then
                         bestArea = area
                         bestFrame = d
@@ -2984,15 +3073,20 @@ function applyHubBackgroundImage(themeName)
     selectedBgTheme = themeName or selectedBgTheme or "None"
     saveConfig()
     task.spawn(function()
-        for _ = 1, 8 do
+        for _ = 1, 12 do
             markHubScreenGuis()
             local host = findHubBackgroundHost()
             if host then
                 local existing = host:FindFirstChild("NTMT_BG")
-                local url = IMAGE_THEME_PRESETS[selectedBgTheme]
-                if not url or selectedBgTheme == "None" then
+                if not IMAGE_THEME_PRESETS[selectedBgTheme] or selectedBgTheme == "None" then
                     if existing then existing:Destroy() end
+                    host.BackgroundTransparency = 0
                     return
+                end
+                local asset = resolveThemeImageAsset(IMAGE_THEME_PRESETS[selectedBgTheme], selectedBgTheme)
+                if not asset then
+                    task.wait(0.3)
+                    continue
                 end
                 local bg = existing
                 if not bg then
@@ -3006,11 +3100,19 @@ function applyHubBackgroundImage(themeName)
                     bg.ZIndex = 0
                     bg.Parent = host
                 end
-                bg.Image = url
+                bg.Image = asset
+                host.BackgroundTransparency = 0.15
+                host.ClipsDescendants = true
+                for _, ch in host:GetChildren() do
+                    if ch:IsA("GuiObject") and ch ~= bg and ch.ZIndex <= bg.ZIndex then
+                        ch.ZIndex = math.max(1, (bg.ZIndex or 0) + 1)
+                    end
+                end
                 return
             end
             task.wait(0.25)
         end
+        hubNotify("Theme", "Open NTMT HUB menu first, then pick theme")
     end)
 end
 
@@ -3724,7 +3826,7 @@ Window = WindUI:CreateWindow({
     OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
 })
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.6", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.6.1", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
 task.defer(function()
@@ -3805,7 +3907,7 @@ multiDropdown(AutoTab, "Plant Seeds", PlantSeedNames, selectedPlantSeeds, false)
 makeToggle(AutoTab, "Auto Shovel", "Remove selected seed plants (batch)", "ftgs_AutoShovel")
 multiDropdown(AutoTab, "Shovel Seeds", SeedNames, selectedShovelSeeds, false)
 makeToggle(AutoTab, "Auto Buy Pet", "Follow pet + tame + defend", "ftgs_AutoBuyPet")
-makeToggle(AutoTab, "Auto Defend Pet", "Shovel + hitbox hit intruders", "ftgs_AutoDefendPet")
+makeToggle(AutoTab, "Auto Defend Pet", "Shovel intruders only while taming pet", "ftgs_AutoDefendPet")
 multiDropdown(AutoTab, "Select Pets", PET_LIST, selectedPets, false)
 
 ShopTab = Window:Tab({ Title = "Shop", Icon = "shopping-cart" })
@@ -4189,30 +4291,6 @@ end)
 
 task.spawn(function()
     while true do
-        if genv.ftgs_AutoDefendPet then
-            safeLoop(function()
-                local pos = getNearestDefendPetPosition()
-                if pos then
-                    local intruders = getPlayersNearPosition(pos, PET_DEFEND_RADIUS)
-                    if #intruders > 0 then
-                        movementBypass = true
-                        attackNearbyIntruders(pos)
-                    else
-                        updateDefendHitboxes(pos)
-                    end
-                elseif defendHitboxActive then
-                    restoreAllHitboxes()
-                end
-            end)
-        elseif defendHitboxActive then
-            restoreAllHitboxes()
-        end
-        task.wait(0.08)
-    end
-end)
-
-task.spawn(function()
-    while true do
         xpcall(function() LocalPlayer:SetAttribute("AntiAfkIdleOverride", 999999999) end, noopErr)
         local vu = Services.VirtualUser
         if vu and type(vu.CaptureController) == "function" then xpcall(function() vu:CaptureController() vu:ClickButton2(Vector2.new()) end, noopErr) end
@@ -4220,7 +4298,7 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v6.6] Loaded | " .. Executor)
+print("[NTMT HUB v6.6.1] Loaded | " .. Executor)
 
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
