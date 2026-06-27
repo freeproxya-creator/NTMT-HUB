@@ -1,6 +1,18 @@
 --[[ NTMT HUB - Grow a Garden 2 v6.0 | made by nguoitinhmuathu ]]
 print("[NTMT HUB] BOOT v6.0")
 
+pcall(function()
+    if delfile and isfile then
+        for _, f in ipairs({
+            "ntmthub/windui_patched_v3.lua",
+            "ntmthub/windui_patched_v4.lua",
+            "ntmthub/windui_patched_v5.lua",
+        }) do
+            if isfile(f) then delfile(f) end
+        end
+    end
+end)
+
 local DISCORD_LINK = "https://discord.gg/your-invite"
 local MADE_BY = "nguoitinhmuathu"
 
@@ -95,50 +107,6 @@ local function cleanupBrokenGetIcons()
     end)
 end
 
-local function installGetIconsHook()
-    cleanupBrokenGetIcons()
-    local RS = game:GetService("ReplicatedStorage")
-    local iconsPayload = { Icons = {} }
-    local mock = setmetatable({}, {
-        __index = function(_, key)
-            if key == "InvokeServer" then return function() return iconsPayload end end
-            if key == "Name" then return "GetIcons" end
-            if key == "Parent" then return RS end
-            if key == "IsA" then return function(_, class) return class == "RemoteFunction" or class == "Instance" end end
-            return nil
-        end,
-    })
-
-    local function isGetIconsWait(self, childName)
-        return (self == RS or (typeof(self) == "Instance" and self.Name == "ReplicatedStorage")) and childName == "GetIcons"
-    end
-
-    if hookmetamethod and getnamecallmethod then
-        pcall(function()
-            local nc = newcclosure or function(f) return f end
-            local oldNamecall
-            oldNamecall = hookmetamethod(game, "__namecall", nc(function(self, ...)
-                local method = getnamecallmethod()
-                if method == "WaitForChild" and isGetIconsWait(self, select(1, ...)) then
-                    return mock
-                end
-                return oldNamecall(self, ...)
-            end))
-        end)
-    end
-
-    if hookfunction and Instance and type(Instance.WaitForChild) == "function" then
-        pcall(function()
-            local nc = newcclosure or function(f) return f end
-            local oldWait = Instance.WaitForChild
-            hookfunction(oldWait, nc(function(self, childName, ...)
-                if isGetIconsWait(self, childName) then return mock end
-                return oldWait(self, childName, ...)
-            end))
-        end)
-    end
-end
-
 local function patchWindUISource(body)
     if type(body) ~= "string" then return body, false end
     local replacement = "local d=b({Icons={}})"
@@ -148,36 +116,381 @@ local function patchWindUISource(body)
         body = body:sub(1, s - 1) .. replacement .. body:sub(e + 1)
     end
     body = body:gsub(
+        'b%(game%.GetService%("ReplicatedStorage"%)%:WaitForChild%("GetIcons",%d+%):InvokeServer%(%)%)',
+        'b({Icons={}})'
+    )
+    body = body:gsub(
         'b%(game:GetService"ReplicatedStorage":WaitForChild%("GetIcons",%d+%):InvokeServer%(%)%)',
         'b({Icons={}})'
     )
     body = body:gsub(
-        'game:GetService"ReplicatedStorage":WaitForChild%("GetIcons",%d+%):InvokeServer%(%)',
-        '({Icons={}})'
+        'game%.GetService%("ReplicatedStorage"%)%:WaitForChild%("GetIcons"[^)]*%)%:InvokeServer%(%)',
+        '{Icons={}}'
     )
+    body = body:gsub(
+        'game:GetService"ReplicatedStorage":WaitForChild%("GetIcons",%d+%):InvokeServer%(%)',
+        '{Icons={}}'
+    )
+    body = body:gsub(':WaitForChild%("GetIcons"[^)]*%)%:InvokeServer%(%)', '{Icons={}}')
     local stillBad = body:find('GetIcons.-InvokeServer%(%)') ~= nil
-        or body:find(':WaitForChild%("GetIcons",%d+%):InvokeServer%(%)') ~= nil
     return body, not stillBad
 end
 
+local function buildWindUIEnv()
+    local env = {}
+    for k, v in pairs(_G) do env[k] = v end
+    for k, v in pairs(genv) do env[k] = v end
+    env.game = game
+    env.workspace = workspace
+    env.script = env.script or script
+    env.getgenv = getgenv or function() return genv end
+    env._G = genv
+    return setmetatable(env, {
+        __index = function(t, k)
+            local v = rawget(t, k)
+            if v ~= nil then return v end
+            v = genv[k]
+            if v ~= nil then return v end
+            return _G[k]
+        end,
+    })
+end
+
 local function compileWindUIChunk(body)
+    local env = buildWindUIEnv()
+    if type(load) == "function" then
+        local chunk, err = load(body, "WindUI", "t", env)
+        if type(chunk) == "function" then return chunk end
+        if err then return nil, err end
+    end
     if type(loadstring) == "function" then
         local chunk, err = loadstring(body, "WindUI")
         if type(chunk) ~= "function" then return nil, err end
+        if setfenv then
+            pcall(function() setfenv(chunk, env) end)
+        end
         return chunk
-    end
-    if type(load) == "function" then
-        return load(body, "WindUI", "t", genv)
     end
     return nil, "no loadstring/load"
 end
 
-local WINDUI_CACHE = "ntmthub/windui_patched_v3.lua"
+local WINDUI_CACHE = "ntmthub/windui_patched_v6.lua"
+
+local function createBuiltinWindUI()
+    local lp = game:GetService("Players").LocalPlayer
+    if not lp then return nil end
+    local pg = lp:FindFirstChild("PlayerGui") or lp:WaitForChild("PlayerGui", 10)
+    if not pg then return nil end
+    local old = pg:FindFirstChild("NTMTHubUI")
+    if old then old:Destroy() end
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "NTMTHubUI"
+    sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.Parent = pg
+
+    local openBtn = Instance.new("TextButton")
+    openBtn.Size = UDim2.fromOffset(96, 36)
+    openBtn.Position = UDim2.new(0, 10, 0.45, 0)
+    openBtn.BackgroundColor3 = Color3.fromRGB(255, 79, 216)
+    openBtn.Text = "NTMT HUB"
+    openBtn.TextColor3 = Color3.new(1, 1, 1)
+    openBtn.Font = Enum.Font.GothamBold
+    openBtn.TextSize = 13
+    openBtn.Parent = sg
+    Instance.new("UICorner", openBtn).CornerRadius = UDim.new(0, 8)
+
+    local panel = Instance.new("Frame")
+    panel.Size = UDim2.new(0.82, 0, 0.74, 0)
+    panel.Position = UDim2.new(0.09, 0, 0.13, 0)
+    panel.BackgroundColor3 = Color3.fromRGB(13, 13, 13)
+    panel.Visible = false
+    panel.Parent = sg
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+
+    local header = Instance.new("TextLabel")
+    header.Size = UDim2.new(1, -8, 0, 30)
+    header.BackgroundTransparency = 1
+    header.Text = "NTMT HUB | Grow a Garden 2"
+    header.TextColor3 = Color3.new(1, 1, 1)
+    header.Font = Enum.Font.GothamBold
+    header.TextSize = 14
+    header.Parent = panel
+
+    local tabBar = Instance.new("Frame")
+    tabBar.Size = UDim2.new(1, -8, 0, 26)
+    tabBar.Position = UDim2.new(0, 4, 0, 32)
+    tabBar.BackgroundTransparency = 1
+    tabBar.Parent = panel
+    local tabBarLayout = Instance.new("UIListLayout")
+    tabBarLayout.FillDirection = Enum.FillDirection.Horizontal
+    tabBarLayout.Padding = UDim.new(0, 4)
+    tabBarLayout.Parent = tabBar
+
+    local body = Instance.new("Frame")
+    body.Size = UDim2.new(1, -8, 1, -64)
+    body.Position = UDim2.new(0, 4, 0, 60)
+    body.BackgroundTransparency = 1
+    body.ClipsDescendants = true
+    body.Parent = panel
+
+    openBtn.MouseButton1Click:Connect(function() panel.Visible = not panel.Visible end)
+
+    local tabFrames, tabBtns, firstTabShown = {}, {}, false
+
+    local function makeTab(title)
+        local holder = Instance.new("Frame")
+        holder.Name = title
+        holder.Size = UDim2.fromScale(1, 1)
+        holder.BackgroundTransparency = 1
+        holder.Visible = false
+        holder.Parent = body
+
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.Size = UDim2.fromScale(1, 1)
+        scroll.BackgroundTransparency = 1
+        scroll.ScrollBarThickness = 3
+        scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+        scroll.Parent = holder
+        local list = Instance.new("UIListLayout")
+        list.Padding = UDim.new(0, 5)
+        list.SortOrder = Enum.SortOrder.LayoutOrder
+        list.Parent = scroll
+        list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+            scroll.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 8)
+        end)
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.fromOffset(math.max(48, #title * 7), 22)
+        btn.Text = title
+        btn.TextSize = 9
+        btn.Font = Enum.Font.GothamBold
+        btn.TextColor3 = Color3.new(1, 1, 1)
+        btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+        btn.Parent = tabBar
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+
+        tabFrames[title] = holder
+        tabBtns[title] = btn
+        if not firstTabShown then
+            firstTabShown = true
+            holder.Visible = true
+            btn.BackgroundColor3 = Color3.fromRGB(255, 79, 216)
+        end
+        btn.MouseButton1Click:Connect(function()
+            for name, fr in pairs(tabFrames) do
+                fr.Visible = name == title
+                tabBtns[name].BackgroundColor3 = name == title and Color3.fromRGB(255, 79, 216) or Color3.fromRGB(45, 45, 45)
+            end
+        end)
+
+        local order = 0
+        local tabObj = {}
+
+        function tabObj:Section(cfg)
+            order += 1
+            local l = Instance.new("TextLabel")
+            l.Size = UDim2.new(1, -6, 0, 20)
+            l.LayoutOrder = order
+            l.BackgroundTransparency = 1
+            l.TextXAlignment = Enum.TextXAlignment.Left
+            l.Font = Enum.Font.GothamBold
+            l.TextSize = 12
+            l.TextColor3 = Color3.fromRGB(255, 79, 216)
+            l.Text = tostring(cfg and cfg.Title or "")
+            l.Parent = scroll
+        end
+
+        function tabObj:Toggle(cfg)
+            order += 1
+            local on = cfg.Default == true
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, -6, 0, 28)
+            b.LayoutOrder = order
+            b.Font = Enum.Font.Gotham
+            b.TextSize = 11
+            b.TextColor3 = Color3.new(1, 1, 1)
+            b.Text = (on and "[ON] " or "[OFF] ") .. tostring(cfg.Title or "")
+            b.BackgroundColor3 = on and Color3.fromRGB(90, 30, 75) or Color3.fromRGB(35, 35, 35)
+            b.Parent = scroll
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+            b.MouseButton1Click:Connect(function()
+                on = not on
+                b.Text = (on and "[ON] " or "[OFF] ") .. tostring(cfg.Title or "")
+                b.BackgroundColor3 = on and Color3.fromRGB(90, 30, 75) or Color3.fromRGB(35, 35, 35)
+                if cfg.Callback then cfg.Callback(on) end
+            end)
+        end
+
+        function tabObj:Button(cfg)
+            order += 1
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, -6, 0, 28)
+            b.LayoutOrder = order
+            b.Text = tostring(cfg.Title or "Button")
+            b.Font = Enum.Font.Gotham
+            b.TextSize = 11
+            b.TextColor3 = Color3.new(1, 1, 1)
+            b.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+            b.Parent = scroll
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+            b.MouseButton1Click:Connect(function() if cfg.Callback then cfg.Callback() end end)
+        end
+
+        function tabObj:Input(cfg)
+            order += 1
+            local box = Instance.new("TextBox")
+            box.Size = UDim2.new(1, -6, 0, 28)
+            box.LayoutOrder = order
+            box.ClearTextOnFocus = false
+            box.PlaceholderText = tostring(cfg.Placeholder or cfg.Title or "")
+            box.Text = tostring(cfg.Value or "")
+            box.Font = Enum.Font.Gotham
+            box.TextSize = 11
+            box.TextColor3 = Color3.new(1, 1, 1)
+            box.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+            box.Parent = scroll
+            Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+            box.FocusLost:Connect(function() if cfg.Callback then cfg.Callback(box.Text) end end)
+        end
+
+        function tabObj:Dropdown(cfg)
+            order += 1
+            local values = cfg.Values or {}
+            local idx = 1
+            if cfg.Value then
+                for i, v in ipairs(values) do if v == cfg.Value then idx = i break end end
+            end
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, -6, 0, 28)
+            b.LayoutOrder = order
+            b.Font = Enum.Font.Gotham
+            b.TextSize = 10
+            b.TextWrapped = true
+            b.TextColor3 = Color3.new(1, 1, 1)
+            b.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+            b.Parent = scroll
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+            local function paint()
+                b.Text = tostring(cfg.Title or "Select") .. ": " .. tostring(values[idx] or "-")
+            end
+            paint()
+            b.MouseButton1Click:Connect(function()
+                if #values == 0 then return end
+                idx = (idx % #values) + 1
+                paint()
+                if not cfg.Callback then return end
+                if cfg.Multi then cfg.Callback({ [values[idx]] = true }) else cfg.Callback(values[idx]) end
+            end)
+        end
+
+        function tabObj:Paragraph(cfg)
+            order += 1
+            local t = Instance.new("TextLabel")
+            t.Size = UDim2.new(1, -6, 0, 16)
+            t.LayoutOrder = order
+            t.BackgroundTransparency = 1
+            t.TextXAlignment = Enum.TextXAlignment.Left
+            t.Font = Enum.Font.GothamBold
+            t.TextSize = 11
+            t.TextColor3 = Color3.new(1, 1, 1)
+            t.Text = tostring(cfg.Title or "")
+            t.Parent = scroll
+            order += 1
+            local d = Instance.new("TextLabel")
+            d.Size = UDim2.new(1, -6, 0, 36)
+            d.LayoutOrder = order
+            d.BackgroundTransparency = 1
+            d.TextXAlignment = Enum.TextXAlignment.Left
+            d.TextYAlignment = Enum.TextYAlignment.Top
+            d.Font = Enum.Font.Gotham
+            d.TextSize = 10
+            d.TextWrapped = true
+            d.TextColor3 = Color3.fromRGB(190, 190, 190)
+            d.Text = tostring(cfg.Desc or "")
+            d.Parent = scroll
+            return {
+                SetDesc = function(_, text)
+                    d.Text = tostring(text or "")
+                end,
+            }
+        end
+
+        function tabObj:Slider(cfg)
+            order += 1
+            local val = (cfg.Value and cfg.Value.Default) or 16
+            local minV = (cfg.Value and cfg.Value.Min) or 0
+            local maxV = (cfg.Value and cfg.Value.Max) or 999
+            local step = cfg.Step or 1
+            local row = Instance.new("Frame")
+            row.Size = UDim2.new(1, -6, 0, 28)
+            row.LayoutOrder = order
+            row.BackgroundTransparency = 1
+            row.Parent = scroll
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(0.55, 0, 1, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.Font = Enum.Font.Gotham
+            lbl.TextSize = 11
+            lbl.TextColor3 = Color3.new(1, 1, 1)
+            lbl.Text = tostring(cfg.Title or "Value") .. ": " .. tostring(val)
+            lbl.Parent = row
+            local minus = Instance.new("TextButton")
+            minus.Size = UDim2.new(0.2, 0, 1, 0)
+            minus.Position = UDim2.new(0.58, 0, 0, 0)
+            minus.Text = "-"
+            minus.Parent = row
+            local plus = Instance.new("TextButton")
+            plus.Size = UDim2.new(0.2, 0, 1, 0)
+            plus.Position = UDim2.new(0.8, 0, 0, 0)
+            plus.Text = "+"
+            plus.Parent = row
+            local function set(v)
+                val = math.clamp(v, minV, maxV)
+                lbl.Text = tostring(cfg.Title or "Value") .. ": " .. tostring(val)
+                if cfg.Callback then cfg.Callback(val) end
+            end
+            minus.MouseButton1Click:Connect(function() set(val - step) end)
+            plus.MouseButton1Click:Connect(function() set(val + step) end)
+        end
+
+        return tabObj
+    end
+
+    local lib = {}
+    function lib:CreateWindow(_cfg)
+        local win = {}
+        function win:Tag() end
+        function win:Tab(cfg) return makeTab(tostring(cfg and cfg.Title or "Tab")) end
+        return win
+    end
+    function lib:Notify(cfg)
+        pcall(function()
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = cfg.Title or "NTMT HUB",
+                Text = cfg.Content or "",
+                Duration = cfg.Duration or 4,
+            })
+        end)
+    end
+    function lib:AddTheme() end
+    function lib:SetTheme() end
+    print("[NTMT HUB] Built-in UI OK (WindUI skipped on this executor)")
+    return lib
+end
 
 local function safeNetCall(remote, ...)
-    if not remote or type(remote.Fire) ~= "function" then return false end
+    if not remote then return false end
     local args = { ... }
-    return select(1, xpcall(function() remote:Fire(table.unpack(args)) end, noopErr))
+    if type(remote.Fire) == "function" then
+        return select(1, xpcall(function() remote:Fire(table.unpack(args)) end, noopErr))
+    end
+    if type(remote.InvokeServer) == "function" then
+        return select(1, xpcall(function() return remote:InvokeServer(table.unpack(args)) end, noopErr))
+    end
+    return false
 end
 
 local function safeFlagGet(flagObj)
@@ -214,10 +527,15 @@ end
 
 local WindUI
 local function loadWindUI()
-    installGetIconsHook()
+    local function finishWithLib(lib)
+        if type(lib) ~= "table" or type(lib.CreateWindow) ~= "function" then return false end
+        WindUI = lib
+        return true
+    end
+
     if type(loadstring) ~= "function" and type(load) ~= "function" then
-        hubWarn("loadstring/load missing on this executor")
-        return false
+        hubWarn("loadstring missing — using built-in UI")
+        return finishWithLib(createBuiltinWindUI())
     end
 
     local body, patchedOk
@@ -230,7 +548,6 @@ local function loadWindUI()
                 print("[NTMT HUB] Using cached patched WindUI")
             elseif delfile then
                 pcall(delfile, WINDUI_CACHE)
-                hubWarn("Deleted bad WindUI cache — will re-download")
             end
         end
     end
@@ -238,13 +555,13 @@ local function loadWindUI()
     if not patchedOk then
         body = universalHttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua")
         if type(body) ~= "string" or #body < 1000 then
-            hubWarn("Could not download WindUI (check HttpGet / internet)")
-            return false
+            hubWarn("WindUI download failed — using built-in UI")
+            return finishWithLib(createBuiltinWindUI())
         end
         body, patchedOk = patchWindUISource(body)
         if not patchedOk then
-            hubWarn("WindUI GetIcons patch FAILED — send console log to dev")
-            return false
+            hubWarn("WindUI patch failed — using built-in UI")
+            return finishWithLib(createBuiltinWindUI())
         end
         if writefile then
             pcall(function()
@@ -254,35 +571,30 @@ local function loadWindUI()
         end
     end
 
-    installGetIconsHook()
+    cleanupBrokenGetIcons()
 
     local chunk, compileErr = compileWindUIChunk(body)
     if type(chunk) ~= "function" then
-        hubWarn("WindUI compile failed:", tostring(compileErr))
-        return false
+        hubWarn("WindUI compile failed — using built-in UI:", tostring(compileErr))
+        return finishWithLib(createBuiltinWindUI())
     end
     local ok, lib = xpcall(chunk, function(err)
         if debug and debug.traceback then return debug.traceback(tostring(err), 2) end
         return tostring(err)
     end)
-    if not ok then
-        hubWarn("WindUI runtime error:", tostring(lib))
+    if not ok or type(lib) ~= "table" or type(lib.CreateWindow) ~= "function" then
+        hubWarn("WindUI runtime failed — using built-in UI:", tostring(lib))
         if delfile and isfile and isfile(WINDUI_CACHE) then pcall(delfile, WINDUI_CACHE) end
-        return false
-    end
-    if type(lib) ~= "table" or type(lib.CreateWindow) ~= "function" then
-        hubWarn("WindUI returned invalid library")
-        return false
+        return finishWithLib(createBuiltinWindUI())
     end
     WindUI = lib
     print("[NTMT HUB] WindUI loaded OK")
     return true
 end
 
-installGetIconsHook()
-
 local function runMain()
-local Services = {
+
+Services = {
     Players = cloneref(game:GetService("Players")),
     ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage")),
     Workspace = cloneref(game:GetService("Workspace")),
@@ -293,21 +605,21 @@ local Services = {
     RunService = cloneref(game:GetService("RunService")),
 }
 
-local LocalPlayer = Services.Players.LocalPlayer or Services.Players.PlayerAdded:Wait()
+LocalPlayer = Services.Players.LocalPlayer or Services.Players.PlayerAdded:Wait()
 repeat task.wait() until game:IsLoaded()
 
 if not loadWindUI() then
-    hubWarn("Script stopped (WindUI failed). Read yellow warnings above.")
+    hubWarn("Script stopped — UI could not load.")
     return
 end
 
-local Gardens = Services.Workspace:WaitForChild("Gardens", 120)
+Gardens = Services.Workspace:WaitForChild("Gardens", 120)
 if not Gardens then warn("[NTMT HUB] Gardens not found") return end
 
-local sessionStart = os.time()
-local totalPlaySeconds = 0
+sessionStart = os.time()
+totalPlaySeconds = 0
 
-local function waitTag(tag, timeout)
+function waitTag(tag, timeout)
     timeout = timeout or 120
     local deadline = os.clock() + timeout
     while not Services.CollectionService:HasTag(LocalPlayer, tag) and os.clock() < deadline do
@@ -317,42 +629,70 @@ local function waitTag(tag, timeout)
 end
 waitTag("DataLoaded", 120)
 
-local Shared = Services.ReplicatedStorage:WaitForChild("SharedModules", 60)
-local Net = require(Shared:WaitForChild("Networking"))
-local SeedData = require(Shared:WaitForChild("SeedData"))
-local SeedShopFlags = require(Shared.Flags:WaitForChild("SeedShopFlags"))
-local GearShopData = require(Shared:WaitForChild("GearShopData"))
-local GearShopFlags = require(Shared.Flags:WaitForChild("GearShopFlags"))
-local GardenFlags = require(Shared.Flags:WaitForChild("GardenFlags"))
-local FruitValueCalc = require(Shared:WaitForChild("FruitValueCalc"))
-local ExpansionPrices = require(Services.ReplicatedStorage.SharedData:WaitForChild("ExpansionPrices"))
-local PetData = require(Services.ReplicatedStorage.SharedData:WaitForChild("PetData"))
-local PetSizes = require(Services.ReplicatedStorage.SharedData:WaitForChild("PetSizes"))
-local PlayerState = require(Services.ReplicatedStorage.ClientModules:WaitForChild("PlayerStateClient"))
-local PlayerReplica = PlayerState:WaitForLocalReplica(120)
+Shared = Services.ReplicatedStorage:WaitForChild("SharedModules", 60)
+function safeRequire(mod)
+    if not mod then return nil end
+    local ok, res = xpcall(require, noopErr, mod)
+    return ok and res or nil
+end
+Net = safeRequire(Shared:WaitForChild("Networking"))
+if not Net then hubWarn("Networking module failed") return end
+SeedData = safeRequire(Shared:WaitForChild("SeedData"))
+SeedShopFlags = safeRequire(Shared.Flags:WaitForChild("SeedShopFlags"))
+GearShopData = safeRequire(Shared:WaitForChild("GearShopData"))
+GearShopFlags = safeRequire(Shared.Flags:WaitForChild("GearShopFlags"))
+GardenFlags = safeRequire(Shared.Flags:WaitForChild("GardenFlags"))
+FruitValueCalc = safeRequire(Shared:WaitForChild("FruitValueCalc"))
+ExpansionPrices = safeRequire(Services.ReplicatedStorage.SharedData:WaitForChild("ExpansionPrices"))
+PetData = safeRequire(Services.ReplicatedStorage.SharedData:WaitForChild("PetData"))
+PetSizes = safeRequire(Services.ReplicatedStorage.SharedData:WaitForChild("PetSizes"))
+PlayerState = safeRequire(Services.ReplicatedStorage.ClientModules:WaitForChild("PlayerStateClient"))
+PlayerReplica = nil
+if PlayerState and type(PlayerState.WaitForLocalReplica) == "function" then
+    local ok, rep = xpcall(function() return PlayerState:WaitForLocalReplica(120) end, noopErr)
+    if ok then PlayerReplica = rep end
+end
+if type(SeedData) ~= "table" then hubWarn("SeedData missing") return end
+if type(GearShopData) ~= "table" or type(GearShopData.Data) ~= "table" then hubWarn("GearShopData missing") return end
 
-local StockItems = Services.ReplicatedStorage:WaitForChild("StockValues"):WaitForChild("SeedShop"):WaitForChild("Items")
-local GearStockItems = Services.ReplicatedStorage:WaitForChild("StockValues"):WaitForChild("GearShop"):WaitForChild("Items")
+StockItems = Services.ReplicatedStorage:WaitForChild("StockValues"):WaitForChild("SeedShop"):WaitForChild("Items")
+GearStockItems = Services.ReplicatedStorage:WaitForChild("StockValues"):WaitForChild("GearShop"):WaitForChild("Items")
 
-local SeedDataByName, SeedNames, GearNames, GearDataByName = {}, {}, {}, {}
+SeedDataByName, SeedNames, GearNames, GearDataByName = {}, {}, {}, {}
 for _, info in ipairs(SeedData) do
     SeedDataByName[info.SeedName] = info
     SeedNames[#SeedNames + 1] = info.SeedName
 end
 table.sort(SeedNames)
+
+function isExcludedPlantBuySeed(name)
+    if type(name) ~= "string" then return false end
+    local lower = string.lower(name)
+    local blocked = { "briar rose", "ghost pepper", "gold hypno bloom", "rainbow" }
+    for _, b in blocked do
+        if lower == b then return true end
+    end
+    return false
+end
+
+PlantSeedNames = {}
+for _, name in ipairs(SeedNames) do
+    if not isExcludedPlantBuySeed(name) then PlantSeedNames[#PlantSeedNames + 1] = name end
+end
+
 for _, info in ipairs(GearShopData.Data) do
     GearDataByName[info.ItemName] = info
     GearNames[#GearNames + 1] = info.ItemName
 end
 table.sort(GearNames)
 
-local PET_LIST = {
+PET_LIST = {
     "Monkey", "Bee", "BlackDragon", "GoldenDragonfly", "Unicorn", "Raccoon", "IceSerpent",
     "Robin", "Deer", "Bunny", "Chicken", "Turtle", "Frog", "GoldenDragon", "Griffin", "Panda",
 }
-local SPRINKLER_LIST = { "Super Sprinkler", "Legendary Sprinkler", "Rare Sprinkler", "Uncommon Sprinkler", "Common Sprinkler" }
-local UI_THEME_NAMES = { "Black", "Pink", "Red", "Green", "Blue", "White", "Gray", "Brown", "Yellow", "Purple" }
-local UI_THEMES = {
+SPRINKLER_LIST = { "Super Sprinkler", "Legendary Sprinkler", "Rare Sprinkler", "Uncommon Sprinkler", "Common Sprinkler" }
+UI_THEME_NAMES = { "Black", "Pink", "Red", "Green", "Blue", "White", "Gray", "Brown", "Yellow", "Purple" }
+UI_THEMES = {
     Black = { accent = "#ff4fd8", bg = "#0d0d0d", btn = "#1a1a1a", text = "#ffffff", toggle = "#ff4fd8" },
     Pink = { accent = "#ff69b4", bg = "#1a0a12", btn = "#2d1520", text = "#ffe6f0", toggle = "#ff69b4" },
     Red = { accent = "#ef4444", bg = "#140808", btn = "#2a1010", text = "#ffe6e6", toggle = "#ef4444" },
@@ -364,27 +704,31 @@ local UI_THEMES = {
     Yellow = { accent = "#eab308", bg = "#1a160a", btn = "#3d3415", text = "#fffbe6", toggle = "#eab308" },
     Purple = { accent = "#a855f7", bg = "#140a1a", btn = "#2a153d", text = "#f3e6ff", toggle = "#a855f7" },
 }
-local COOLDOWN = { Harvest = 0.01, Plant = 0.35, Buy = 0.01, Expand = 8, Sell = 0.5, Shovel = 0.25, Gear = 0.5, Pet = 0.35, Mail = 2 }
-local PLANT_MIN_DIST = 3
-local MUTATION_COLLECT_WAIT = 0.1
-local SLOW_FLY_RATIO = 0.22
-local PET_FIND_SCAN_SEC = 5
-local FLY_STEP = 18
-local SEGMENT_PAUSE = 1
-local NEAR_PLAYER_DIST = 20
-local PLOT_EDGE_MARGIN = 8
-local STEAL_BATCH = 3
-local STEAL_HOLD_TIMEOUT = 30
-local SHOVEL_BATCH = 10
-local MAIL_MAX_PER_GIFT = 20
-local MAIL_SEND_GAP = 1.5
-local MAIL_GEAR_CATEGORIES = { "Sprinklers", "WateringCans", "Mushrooms", "Gnomes", "Raccoons", "Crates", "SeedPacks", "Trowels", "Props", "Flashbangs", "EmptyPots", "Shovels" }
-local RARITY_RANK = { Secret = 1, Super = 2, Mythic = 3, Legendary = 4, Epic = 5, Rare = 6, Uncommon = 7, Common = 8 }
-local CONFIG_FILE = "ntmthub_gag2_config.json"
+COOLDOWN = { Harvest = 0.01, Plant = 0.35, Buy = 0.01, Expand = 8, Sell = 0.5, Shovel = 0.25, Gear = 0.5, Pet = 0.35, Mail = 2 }
+PLANT_MIN_DIST = 3
+MUTATION_COLLECT_WAIT = 0.1
+SLOW_FLY_RATIO = 0.22
+PET_FIND_SCAN_SEC = 5
+FLY_STEP = 18
+SEGMENT_PAUSE = 1
+NEAR_PLAYER_DIST = 20
+PLOT_EDGE_MARGIN = 8
+SPRINKLER_MIN_DIST = 8
+STEAL_BATCH = 3
+STEAL_HOLD_TIMEOUT = 12
+WATERING_CAN_LIST = { "Super Watering Can", "Legendary Watering Can", "Rare Watering Can", "Uncommon Watering Can", "Common Watering Can" }
+SHOVEL_BATCH = 10
+MAIL_MAX_PER_GIFT = 20
+MAIL_SEND_GAP = 1.5
+MAIL_GEAR_CATEGORIES = { "Sprinklers", "WateringCans", "Mushrooms", "Gnomes", "Raccoons", "Crates", "SeedPacks", "Trowels", "Props", "Flashbangs", "EmptyPots", "Shovels" }
+RARITY_RANK = { Secret = 1, Super = 2, Mythic = 3, Legendary = 4, Epic = 5, Rare = 6, Uncommon = 7, Common = 8 }
+CONFIG_FILE = "ntmthub_gag2_config.json"
 
-local movementBypass = false
-local gardenActionLock = false
-local plantingBusy, sprinklerBusy, shovelBusy, stealBusy, dropsBusy = false, false, false, false, false
+movementBypass = false
+gardenActionLock = false
+plantingBusy, sprinklerBusy, shovelBusy, stealBusy, dropsBusy = false, false, false, false, false
+sprinkledSpots = {}
+sprinkledPlantKeys = {}
 
 genv.ftgs_AutoHarvest = false
 genv.ftgs_AutoSell = false
@@ -408,31 +752,31 @@ genv.ftgs_AutoEquipBestPet = false
 genv.ftgs_AutoWebhook = false
 genv.ftgs_AutoSendMail = false
 
-local selectedBuySeeds, selectedBuyGears = {}, {}
-local selectedPlantSeeds, selectedShovelSeeds, selectedSprinklers, selectedPets = { Carrot = true }, { Carrot = true }, { ["Super Sprinkler"] = true }, { Unicorn = true }
-local mailUsername, mailSeedName, mailGearName = "", "Carrot", GearNames[1] or ""
-local mailSeedAmount, mailGearAmount, mailMessage = 1, 0, "NTMT HUB"
-local selectedFindPet = "Unicorn"
-local selectedUITheme = "Black"
-local desiredWalkSpeed, desiredJumpPower = 16, 50
-local webhookUrl, webhookIntervalMin, inputJobId = "", 5, ""
+selectedBuySeeds, selectedBuyGears = {}, {}
+selectedPlantSeeds, selectedShovelSeeds, selectedSprinklers, selectedPets = { Carrot = true }, { Carrot = true }, { ["Super Sprinkler"] = true }, { Unicorn = true }
+mailUsername, mailSeedName, mailGearName = "", "Carrot", GearNames[1] or ""
+mailSeedAmount, mailGearAmount, mailMessage = 1, 0, "NTMT HUB"
+selectedFindPet = "Unicorn"
+selectedUITheme = "Black"
+desiredWalkSpeed, desiredJumpPower = 16, 50
+webhookUrl, webhookIntervalMin, inputJobId = "", 5, ""
 
-local BoughtSeeds, BoughtGears, BoughtPets = {}, {}, {}
-local StolenFruits = {}
+BoughtSeeds, BoughtGears, BoughtPets = {}, {}, {}
+StolenFruits = {}
 
-local OwnerPlot, PlayerPlot = nil, nil
-local savedPlotCenter, savedPlotSize = nil, Vector3.new(44, 1, 44)
-local plantAreas, savedPlantPositions = {}, {}
-local trackedPlants, myUserId = {}, LocalPlayer.UserId
-local WildPetFolder, WildPetSpawns, SeedPackSpawns = nil, nil, nil
-local isCatchingPet, petCatchCooldown = false, {}
-local collectingMutation, petFindBusy = false, false
-local lastPlant, lastExpand, lastShovel, lastGear, lastPet, lastSellTry, lastMailTime = 0, 0, 0, 0, 0, 0, 0
-local isSendingMail = false
-local firedSet = {}
-local HARVEST_BATCH = 1
+OwnerPlot, PlayerPlot = nil, nil
+savedPlotCenter, savedPlotSize = nil, Vector3.new(44, 1, 44)
+plantAreas, savedPlantPositions = {}, {}
+trackedPlants, myUserId = {}, LocalPlayer.UserId
+WildPetFolder, WildPetSpawns, SeedPackSpawns = nil, nil, nil
+isCatchingPet, petCatchCooldown = false, {}
+collectingMutation, petFindBusy = false, false
+lastPlant, lastExpand, lastShovel, lastGear, lastPet, lastSellTry, lastMailTime = 0, 0, 0, 0, 0, 0, 0
+isSendingMail = false
+firedSet = {}
+HARVEST_BATCH = 1
 
-local function saveConfig()
+function saveConfig()
     if not writefile then return end
     xpcall(function()
         writefile(CONFIG_FILE, Services.HttpService:JSONEncode({
@@ -455,7 +799,7 @@ local function saveConfig()
     end, noopErr)
 end
 
-local function loadConfig()
+function loadConfig()
     if type(genv.ftgs_webhookUrl) == "string" and genv.ftgs_webhookUrl ~= "" then webhookUrl = genv.ftgs_webhookUrl end
     if type(genv.ftgs_webhookIntervalMin) == "number" then webhookIntervalMin = genv.ftgs_webhookIntervalMin end
     if type(genv.ftgs_uiTheme) == "string" then selectedUITheme = genv.ftgs_uiTheme end
@@ -482,24 +826,24 @@ end
 loadConfig()
 
 
-local function getRoot()
+function getRoot()
     local c = LocalPlayer.Character
     return c and c:FindFirstChild("HumanoidRootPart")
 end
 
-local function getHumanoid()
+function getHumanoid()
     local c = LocalPlayer.Character
     return c and c:FindFirstChildOfClass("Humanoid")
 end
 
-local function formatDuration(totalSec)
+function formatDuration(totalSec)
     totalSec = math.max(0, math.floor(totalSec))
     return string.format("%dh %02dm %02ds", math.floor(totalSec / 3600), math.floor((totalSec % 3600) / 60), totalSec % 60)
 end
 
-local function timeAgo(ts) return formatDuration(os.time() - ts) .. " ago" end
+function timeAgo(ts) return formatDuration(os.time() - ts) .. " ago" end
 
-local function getSheckles()
+function getSheckles()
     local ls = LocalPlayer:FindFirstChild("leaderstats")
     local s = ls and ls:FindFirstChild("Sheckles")
     if s then return s.Value end
@@ -507,11 +851,11 @@ local function getSheckles()
     return 0
 end
 
-local function getFruitCount() return LocalPlayer:GetAttribute("FruitCount") or 0 end
-local function getMaxFruitCapacity() return LocalPlayer:GetAttribute("MaxFruitCapacity") or 100 end
-local function isInventoryFull() return getFruitCount() >= getMaxFruitCapacity() end
+function getFruitCount() return LocalPlayer:GetAttribute("FruitCount") or 0 end
+function getMaxFruitCapacity() return LocalPlayer:GetAttribute("MaxFruitCapacity") or 100 end
+function isInventoryFull() return getFruitCount() >= getMaxFruitCapacity() end
 
-local function cachePlantPositions(plot)
+function cachePlantPositions(plot)
     table.clear(savedPlantPositions)
     if not plot then return end
     local visual = plot:FindFirstChild("Visual")
@@ -525,7 +869,7 @@ local function cachePlantPositions(plot)
     end
 end
 
-local function refreshPlantAreas()
+function refreshPlantAreas()
     table.clear(plantAreas)
     for _, pos in savedPlantPositions do plantAreas[#plantAreas + 1] = pos end
     if #plantAreas == 0 and savedPlotCenter then
@@ -538,7 +882,7 @@ local function refreshPlantAreas()
     end
 end
 
-local function refreshOwnerPlot()
+function refreshOwnerPlot()
     if OwnerPlot and OwnerPlot.Parent then return OwnerPlot end
     if not Gardens then return nil end
     for _, plot in Gardens:GetChildren() do
@@ -561,12 +905,12 @@ end
 
 task.defer(function() refreshOwnerPlot() safeNetCall(Net.Garden and Net.Garden.RequestGardens) end)
 
-local function getPlantSeedName(data)
+function getPlantSeedName(data)
     if type(data) ~= "table" then return nil end
     return data.PlantName or data.plantName or data.seedName or data.SeedName or data.Seed or data.seed or data.Name
 end
 
-local function hookGardenRemotes()
+function hookGardenRemotes()
     local function hook(name, fn)
         local r = Net.Garden and Net.Garden[name]
         if r and r.OnClientEvent then xpcall(function() r.OnClientEvent:Connect(fn) end, noopErr) end
@@ -597,7 +941,7 @@ local function hookGardenRemotes()
 end
 hookGardenRemotes()
 
-local function tpInstant(pos)
+function tpInstant(pos)
     local hrp = getRoot()
     if not hrp or not pos then return false end
     hrp.AssemblyLinearVelocity = Vector3.zero
@@ -606,7 +950,11 @@ local function tpInstant(pos)
     return true
 end
 
-local function flySteps(from, to)
+function getGearStandPos(placePos)
+    return placePos + Vector3.new(0, 3, 0)
+end
+
+function flySteps(from, to)
     local dist = (to - from).Magnitude
     if dist <= 6 then tpInstant(to - Vector3.new(0, 3, 0)) return end
     local steps = math.max(2, math.ceil(dist / FLY_STEP))
@@ -623,7 +971,7 @@ local function flySteps(from, to)
     end
 end
 
-local function segmentedFlyTo(targetPos)
+function segmentedFlyTo(targetPos)
     local hrp = getRoot()
     if not hrp or not targetPos then return false end
     local goal = targetPos + Vector3.new(0, 3, 0)
@@ -638,17 +986,17 @@ local function segmentedFlyTo(targetPos)
     return true
 end
 
-local function getPlotCenterCFrame()
+function getPlotCenterCFrame()
     refreshOwnerPlot()
     return savedPlotCenter and CFrame.new(savedPlotCenter + Vector3.new(0, 3, 0)) or nil
 end
 
-local function returnToGarden()
+function returnToGarden()
     refreshOwnerPlot()
     tpInstant(savedPlotCenter)
 end
 
-local function holdGardenStill(duration)
+function holdGardenStill(duration)
     refreshOwnerPlot()
     if not savedPlotCenter then return end
     local cf = CFrame.new(savedPlotCenter + Vector3.new(0, 3, 0))
@@ -671,7 +1019,7 @@ local function holdGardenStill(duration)
     gardenActionLock = false
 end
 
-local function parseMultiSelect(sel, into)
+function parseMultiSelect(sel, into)
     table.clear(into)
     if type(sel) ~= "table" then return end
     for k, v in pairs(sel) do
@@ -680,15 +1028,15 @@ local function parseMultiSelect(sel, into)
     end
 end
 
-local function setHasAny(set) return next(set) ~= nil end
+function setHasAny(set) return next(set) ~= nil end
 
-local function seedInSet(set, name)
+function seedInSet(set, name)
     if not setHasAny(set) then return true end
     for k in set do if seedNamesMatch(k, name) then return true end end
     return false
 end
 
-local function buildPriorityList(selected, fallbackList)
+function buildPriorityList(selected, fallbackList)
     local out, seen = {}, {}
     for name in selected do
         if not seen[name] then out[#out + 1], seen[name] = name, true end
@@ -698,7 +1046,7 @@ local function buildPriorityList(selected, fallbackList)
     return fallbackList
 end
 
-local function isWithinPlot(extra)
+function isWithinPlot(extra)
     refreshOwnerPlot()
     if not savedPlotCenter then return false end
     local hrp = getRoot()
@@ -710,15 +1058,15 @@ local function isWithinPlot(extra)
         and math.abs(hrp.Position.Z - savedPlotCenter.Z) <= hz
 end
 
-local function isStandingOnPlot()
+function isStandingOnPlot()
     return isWithinPlot(2)
 end
 
-local function isNearPlotForActions()
+function isNearPlotForActions()
     return isWithinPlot(PLOT_EDGE_MARGIN)
 end
 
-local function slowFlyTo(targetPos)
+function slowFlyTo(targetPos)
     if not targetPos then return false end
     movementBypass = true
     local deadline = os.clock() + 90
@@ -745,7 +1093,7 @@ local function slowFlyTo(targetPos)
     return false
 end
 
-local function matchesAnySelectedPet(species, size)
+function matchesAnySelectedPet(species, size)
     if not setHasAny(selectedPets) then return false end
     for petName in selectedPets do
         if matchesPet(species, size, petName) then return true end
@@ -753,7 +1101,7 @@ local function matchesAnySelectedPet(species, size)
     return false
 end
 
-local function findGearMailCategory(gearName)
+function findGearMailCategory(gearName)
     local inv = PlayerReplica and PlayerReplica.Data and PlayerReplica.Data.Inventory
     if type(inv) == "table" then
         for _, cat in MAIL_GEAR_CATEGORIES do
@@ -770,7 +1118,7 @@ local function findGearMailCategory(gearName)
     return "Sprinklers"
 end
 
-local function lookupMailUserId(username)
+function lookupMailUserId(username)
     if type(username) ~= "string" or username == "" then return nil end
     username = string.gsub(username, "^%s*@?(.-)%s*$", "%1")
     if username == "" then return nil end
@@ -781,7 +1129,7 @@ local function lookupMailUserId(username)
     return nil
 end
 
-local function sendMailBatch(userId, batch, note)
+function sendMailBatch(userId, batch, note)
     if type(userId) ~= "number" or #batch == 0 then return false end
     local mailbox = Net.Mailbox
     if not mailbox or not mailbox.SendBatch or type(mailbox.SendBatch.Fire) ~= "function" then return false end
@@ -789,7 +1137,7 @@ local function sendMailBatch(userId, batch, note)
     return ok and success == true
 end
 
-local function tryAutoMail()
+function tryAutoMail()
     if not genv.ftgs_AutoSendMail or isSendingMail then return end
     if mailUsername == "" then return end
     if os.clock() - lastMailTime < COOLDOWN.Mail then return end
@@ -814,39 +1162,39 @@ local function tryAutoMail()
     end)
 end
 
-local function flatDistXZ(a, b)
+function flatDistXZ(a, b)
     return (Vector3.new(a.X, 0, a.Z) - Vector3.new(b.X, 0, b.Z)).Magnitude
 end
 
-local function getPlayerFlatPos()
+function getPlayerFlatPos()
     local hrp = getRoot()
     return hrp and Vector3.new(hrp.Position.X, 0, hrp.Position.Z) or nil
 end
 
-local function isStealComplete(fruit, fruitCountBefore)
+function isStealComplete(fruit, fruitCountBefore)
     if not fruit or not fruit.Parent then return true end
     if not getStealPrompt(fruit) then return true end
     if getFruitCount() > fruitCountBefore then return true end
     return false
 end
 
-local function getRarityRank(rarity) return RARITY_RANK[rarity] or 99 end
-local function getSeedRarity(seedName) local i = SeedDataByName[seedName] return i and i.Rarity or "Common" end
-local function getSeedPrice(name)
+function getRarityRank(rarity) return RARITY_RANK[rarity] or 99 end
+function getSeedRarity(seedName) local i = SeedDataByName[seedName] return i and i.Rarity or "Common" end
+function getSeedPrice(name)
     local info = SeedDataByName[name]
     if not info then return math.huge end
     return (safeFlagGet(SeedShopFlags and SeedShopFlags.PriceOverrides))[name] or info.PurchasePrice
 end
-local function getGearPrice(name)
+function getGearPrice(name)
     local info = GearDataByName[name]
     if not info then return math.huge end
     return (safeFlagGet(GearShopFlags and GearShopFlags.PriceOverrides))[name] or info.Cost or math.huge
 end
 
-local function normalizeSeedKey(name) return type(name) == "string" and string.gsub(name, "%s+", "") or name end
-local function seedNamesMatch(a, b) return a == b or normalizeSeedKey(a) == normalizeSeedKey(b) end
+function normalizeSeedKey(name) return type(name) == "string" and string.gsub(name, "%s+", "") or name end
+function seedNamesMatch(a, b) return a == b or normalizeSeedKey(a) == normalizeSeedKey(b) end
 
-local function findGearTool(attrName, priority)
+function findGearTool(attrName, priority)
     local found = {}
     local function scan(c)
         if not c then return end
@@ -860,7 +1208,7 @@ local function findGearTool(attrName, priority)
     return nil, nil
 end
 
-local function findSeedToolByName(seedName)
+function findSeedToolByName(seedName)
     local function scan(c)
         if not c then return end
         for _, item in c:GetChildren() do
@@ -873,12 +1221,12 @@ local function findSeedToolByName(seedName)
     return scan(LocalPlayer.Character) or scan(LocalPlayer:FindFirstChild("Backpack"))
 end
 
-local function pickNextPlantSeed()
+function pickNextPlantSeed()
     for name in selectedPlantSeeds do
         local tool = findSeedToolByName(name)
         if tool then return name, tool end
     end
-    for _, name in SeedNames do
+    for _, name in PlantSeedNames do
         if selectedPlantSeeds[name] then
             local tool = findSeedToolByName(name)
             if tool then return name, tool end
@@ -887,13 +1235,13 @@ local function pickNextPlantSeed()
     return nil, nil
 end
 
-local function equipTool(tool)
+function equipTool(tool)
     if not tool then return end
     local hum = getHumanoid()
     if hum and tool.Parent ~= LocalPlayer.Character then hum:EquipTool(tool) task.wait(0.12) end
 end
 
-local function getSeedStock(name)
+function getSeedStock(name)
     local item = StockItems:FindFirstChild(name)
     local maxStock = item and item.Value or 0
     local bought = 0
@@ -903,7 +1251,7 @@ local function getSeedStock(name)
     return math.max(maxStock - bought, 0)
 end
 
-local function getGearStock(name)
+function getGearStock(name)
     local item = GearStockItems:FindFirstChild(name)
     local maxStock = item and item.Value or 0
     local bought = 0
@@ -913,7 +1261,7 @@ local function getGearStock(name)
     return math.max(maxStock - bought, 0)
 end
 
-local function countSeedOwned(name)
+function countSeedOwned(name)
     local n = 0
     local function scan(c)
         if not c then return end
@@ -933,7 +1281,7 @@ local function countSeedOwned(name)
     return n
 end
 
-local function getOccupiedPlantPositions()
+function getOccupiedPlantPositions()
     local positions = {}
     refreshOwnerPlot()
     local pf = OwnerPlot and OwnerPlot:FindFirstChild("Plants")
@@ -945,14 +1293,14 @@ local function getOccupiedPlantPositions()
     return positions
 end
 
-local function isSpotEmpty(pos, occupied)
+function isSpotEmpty(pos, occupied)
     for _, p in occupied do
         if (Vector3.new(p.X, 0, p.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude < PLANT_MIN_DIST then return false end
     end
     return true
 end
 
-local function findEmptyGardenSpotNearPlayer()
+function findEmptyGardenSpotNearPlayer()
     refreshOwnerPlot()
     if #plantAreas == 0 then refreshPlantAreas() end
     local playerFlat = getPlayerFlatPos()
@@ -978,7 +1326,7 @@ local function findEmptyGardenSpotNearPlayer()
     return best
 end
 
-local function extractPlantDataPosition(plantData)
+function extractPlantDataPosition(plantData)
     if type(plantData) ~= "table" then return nil end
     local positions = plantData.Positions or plantData.Position
     if typeof(positions) == "Vector3" then return positions end
@@ -991,7 +1339,7 @@ local function extractPlantDataPosition(plantData)
     return nil
 end
 
-local function findPlantAreaPosition(nearPos)
+function findPlantAreaPosition(nearPos)
     if #plantAreas == 0 then refreshPlantAreas() end
     if #plantAreas == 0 or not nearPos then return nil end
     local bestPos, bestDist
@@ -1002,25 +1350,35 @@ local function findPlantAreaPosition(nearPos)
     return bestPos
 end
 
-local function findBestSprinklerSpotNearPlayer()
+
+function isSprinklerSpotTaken(pos, plantKey)
+    if plantKey and sprinkledPlantKeys[plantKey] then return true end
+    for _, s in sprinkledSpots do
+        if flatDistXZ(pos, s) < SPRINKLER_MIN_DIST then return true end
+    end
+    return false
+end
+
+function findBestSprinklerSpotNearPlayer()
     refreshOwnerPlot()
     local playerFlat = getPlayerFlatPos()
     if not playerFlat then return nil end
 
     local candidates = {}
-    local function addCandidate(rawPos, seed)
+    local function addCandidate(rawPos, seed, plantKey)
         if not rawPos or not seed then return end
         local spot = findPlantAreaPosition(rawPos) or rawPos
+        if isSprinklerSpotTaken(spot, plantKey) then return end
         local dist = flatDistXZ(spot, playerFlat)
         if dist > NEAR_PLAYER_DIST then return end
         local rank = getRarityRank(getSeedRarity(seed))
         local valueScore = (9 - math.min(rank, 8)) * 1000 + getSeedPrice(seed)
-        candidates[#candidates + 1] = { pos = spot, score = valueScore - dist * 20 }
+        candidates[#candidates + 1] = { pos = spot, score = valueScore - dist * 20, plantKey = plantKey }
     end
 
-    for _, pd in pairs(trackedPlants) do
+    for plantId, pd in pairs(trackedPlants) do
         local seed = getPlantSeedName(pd)
-        if seed then addCandidate(extractPlantDataPosition(pd), seed) end
+        if seed then addCandidate(extractPlantDataPosition(pd), seed, tostring(plantId)) end
     end
 
     local pf = OwnerPlot and OwnerPlot:FindFirstChild("Plants")
@@ -1029,23 +1387,27 @@ local function findBestSprinklerSpotNearPlayer()
             local seed = plant:GetAttribute("SeedName") or plant:GetAttribute("PlantName")
             if seed then
                 local part = plant.PrimaryPart or plant:FindFirstChildWhichIsA("BasePart", true)
-                if part then addCandidate(part.Position, seed) end
+                if part then
+                    local pid = plant:GetAttribute("PlantId") or plant.Name
+                    addCandidate(part.Position, seed, tostring(pid))
+                end
             end
         end
     end
 
     table.sort(candidates, function(a, b) return a.score > b.score end)
-    if candidates[1] then return candidates[1].pos end
+    if candidates[1] then return candidates[1].pos, candidates[1].plantKey end
 
     local hrp = getRoot()
     if hrp then
         local y = savedPlotCenter and savedPlotCenter.Y or hrp.Position.Y
-        return findPlantAreaPosition(hrp.Position) or Vector3.new(hrp.Position.X, y, hrp.Position.Z)
+        local fallback = findPlantAreaPosition(hrp.Position) or Vector3.new(hrp.Position.X, y, hrp.Position.Z)
+        if not isSprinklerSpotTaken(fallback, nil) then return fallback end
     end
     return nil
 end
 
-local function initMapFolders()
+function initMapFolders()
     local map = Services.Workspace:FindFirstChild("Map")
     if map then
         WildPetFolder = map:FindFirstChild("WildPetRef")
@@ -1055,44 +1417,44 @@ local function initMapFolders()
 end
 initMapFolders()
 
-local function normalizePetName(s) return string.lower(string.gsub(s or "", "^%s*(.-)%s*$", "%1")) end
-local function getPetDisplayName(species, size)
+function normalizePetName(s) return string.lower(string.gsub(s or "", "^%s*(.-)%s*$", "%1")) end
+function getPetDisplayName(species, size)
     local ok, d = xpcall(PetData.GetDisplayName, noopErr, species, size)
     if ok and type(d) == "string" then return d end
     ok, d = xpcall(PetData.GetSpeciesDisplayName, noopErr, species)
     if ok and type(d) == "string" then return d end
     return species
 end
-local function matchesPet(species, size, target)
+function matchesPet(species, size, target)
     local t = normalizePetName(target)
     local d = normalizePetName(getPetDisplayName(species, size))
     local s = normalizePetName(getPetDisplayName(species, nil))
     return d == t or s == t or string.find(d, t, 1, true) or string.find(s, t, 1, true)
 end
 
-local function trackSeedBuy(name)
+function trackSeedBuy(name)
     local p = getSeedPrice(name)
     local e = BoughtSeeds[name]
     if e then e.amount += 1 else BoughtSeeds[name] = { amount = 1, price = p } end
 end
-local function trackGearBuy(name)
+function trackGearBuy(name)
     local p = getGearPrice(name)
     local e = BoughtGears[name]
     if e then e.amount += 1 else BoughtGears[name] = { amount = 1, price = p } end
 end
-local function trackPetBuy(name, price)
+function trackPetBuy(name, price)
     local e = BoughtPets[name]
     if e then e.amount += 1 else BoughtPets[name] = { amount = 1, price = price or 0 } end
 end
 
-local function isDataReady(data)
+function isDataReady(data)
     if type(data) ~= "table" then return false end
     local maxAge = data.MaxAge or 0
     local age = data.Age or 0
     return maxAge <= 0 or age >= maxAge
 end
 
-local function tryHarvestOne()
+function tryHarvestOne()
     if not genv.ftgs_AutoHarvest then return end
     local n = 0
     local now = os.clock()
@@ -1125,12 +1487,20 @@ local function tryHarvestOne()
     end
 end
 
-local function tryBuySeedsFast()
+function tryBuySeedsFast()
     if not genv.ftgs_AutoBuySeed and not genv.ftgs_AutoBuyAllSeed then return end
     local list = {}
     if genv.ftgs_AutoBuyAllSeed then
-        for _, ch in StockItems:GetChildren() do if ch:IsA("ValueBase") and ch.Value > 0 then list[#list + 1] = ch.Name end end
-    else for n in selectedBuySeeds do list[#list + 1] = n end end
+        for _, ch in StockItems:GetChildren() do
+            if ch:IsA("ValueBase") and ch.Value > 0 and not isExcludedPlantBuySeed(ch.Name) then
+                list[#list + 1] = ch.Name
+            end
+        end
+    else
+        for n in selectedBuySeeds do
+            if not isExcludedPlantBuySeed(n) then list[#list + 1] = n end
+        end
+    end
     local sheckles = getSheckles()
     for _, name in list do
         if getSeedStock(name) > 0 and sheckles >= getSeedPrice(name) then
@@ -1142,7 +1512,7 @@ local function tryBuySeedsFast()
     end
 end
 
-local function tryBuyGearsFast()
+function tryBuyGearsFast()
     if not genv.ftgs_AutoBuyGear and not genv.ftgs_AutoBuyAllGear then return end
     local list = {}
     if genv.ftgs_AutoBuyAllGear then
@@ -1159,7 +1529,7 @@ local function tryBuyGearsFast()
     end
 end
 
-local function tryAutoPlant()
+function tryAutoPlant()
     if not genv.ftgs_AutoPlant or plantingBusy or not setHasAny(selectedPlantSeeds) then return end
     if os.clock() - lastPlant < COOLDOWN.Plant then return end
     if not isNearPlotForActions() then return end
@@ -1179,13 +1549,13 @@ local function tryAutoPlant()
     end)
 end
 
-local function trySprinkler()
+function trySprinkler()
     if not genv.ftgs_AutoSprinkler or sprinklerBusy then return end
     if os.clock() - lastGear < COOLDOWN.Gear then return end
     if not isNearPlotForActions() then return end
     local plotId = LocalPlayer:GetAttribute("PlotId")
     if not plotId then return end
-    local placePos = findBestSprinklerSpotNearPlayer()
+    local placePos, plantKey = findBestSprinklerSpotNearPlayer()
     if not placePos then return end
     local spPriority = buildPriorityList(selectedSprinklers, SPRINKLER_LIST)
     local spTool, spName = findGearTool("Sprinkler", spPriority)
@@ -1195,11 +1565,14 @@ local function trySprinkler()
     task.spawn(function()
         equipTool(spTool)
         safeNetCall(Net.Place and Net.Place.PlaceSprinkler, placePos, spName, spTool, plotId)
+        sprinkledSpots[#sprinkledSpots + 1] = placePos
+        if plantKey then sprinkledPlantKeys[plantKey] = true end
+        if #sprinkledSpots > 24 then table.remove(sprinkledSpots, 1) end
         sprinklerBusy = false
     end)
 end
 
-local function tryShovel()
+function tryShovel()
     if not genv.ftgs_AutoShovel or shovelBusy or not setHasAny(selectedShovelSeeds) then return end
     if os.clock() - lastShovel < COOLDOWN.Shovel then return end
     if not isNearPlotForActions() then return end
@@ -1254,7 +1627,7 @@ end
 
 -- ===== STEAL =====
 
-local function plotUnlocked(player)
+function plotUnlocked(player)
     if not player or not Gardens then return false end
     local plot
     for _, p in Gardens:GetChildren() do
@@ -1269,7 +1642,7 @@ local function plotUnlocked(player)
     return true
 end
 
-local function calculateStealValue(fruit)
+function calculateStealValue(fruit)
     local name = fruit:GetAttribute("CorePartName") or fruit:GetAttribute("PlantName")
     local size = fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("Age")
     local mut = fruit:GetAttribute("Mutation")
@@ -1277,14 +1650,14 @@ local function calculateStealValue(fruit)
     return ok and val or 0
 end
 
-local function getPlotCenterPos(plot)
+function getPlotCenterPos(plot)
     if not plot then return nil end
     local psr = plot:FindFirstChild("PlotSizeReference")
     if psr and psr:IsA("BasePart") then return psr.Position end
     return plot:GetPivot().Position
 end
 
-local function getStealPrompt(fruit)
+function getStealPrompt(fruit)
     local hp = fruit and fruit:FindFirstChild("HarvestPart")
     if not hp then return nil end
     local prompt = hp:FindFirstChild("StealPrompt")
@@ -1294,7 +1667,7 @@ local function getStealPrompt(fruit)
     return prompt or hp:FindFirstChildWhichIsA("ProximityPrompt")
 end
 
-local function getStealableFruitsOnPlot(plot, limit)
+function getStealableFruitsOnPlot(plot, limit)
     local list = {}
     if not plot then return list end
     local plants = plot:FindFirstChild("Plants")
@@ -1314,7 +1687,7 @@ local function getStealableFruitsOnPlot(plot, limit)
     return out
 end
 
-local function findBestStealPlot()
+function findBestStealPlot()
     local bestPlot, bestOwner, bestValue = nil, nil, 0
     if not Gardens then return nil, nil end
     for _, plot in Gardens:GetChildren() do
@@ -1331,7 +1704,7 @@ local function findBestStealPlot()
     return bestPlot, bestOwner
 end
 
-local function fireProximityPrompt(prompt)
+function fireProximityPrompt(prompt)
     if not prompt then return false end
     local fn = fireproximityprompt or rawget(genv, "fireproximityprompt")
     if type(fn) == "function" and select(1, xpcall(fn, noopErr, prompt, 0)) then return true end
@@ -1343,7 +1716,7 @@ local function fireProximityPrompt(prompt)
     end, noopErr)
 end
 
-local function stealFruit(fruit, ownerUserId)
+function stealFruit(fruit, ownerUserId)
     if not fruit or not fruit.Parent then return false end
     local hp = fruit:FindFirstChild("HarvestPart")
     if not hp then return false end
@@ -1353,33 +1726,27 @@ local function stealFruit(fruit, ownerUserId)
     local fruitId = fruit:GetAttribute("FruitId") or ""
     if not uid or not plantId then return false end
 
-    tpInstant(stealPos)
-    task.wait(0.25)
-
     local fruitCountBefore = getFruitCount()
-    local deadline = os.clock() + STEAL_HOLD_TIMEOUT
-    local standCf = CFrame.new(stealPos + Vector3.new(0, 3, 0))
+    movementBypass = true
 
-    while os.clock() < deadline and not isStealComplete(fruit, fruitCountBefore) do
+    for _ = 1, 25 do
+        if isStealComplete(fruit, fruitCountBefore) then break end
+        tpInstant(stealPos)
+        task.wait(0.06)
         local hrp = getRoot()
-        local hum = getHumanoid()
         if hrp then
             hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-            hrp.CFrame = standCf
+            hrp.CFrame = CFrame.new(stealPos + Vector3.new(0, 3, 0))
         end
-        if hum then hum.PlatformStand = true end
-
         local prompt = getStealPrompt(fruit)
         if prompt then fireProximityPrompt(prompt) end
         safeNetCall(Net.Steal and Net.Steal.BeginSteal, uid, plantId, fruitId)
-        task.wait(0.08)
+        task.wait(0.05)
         safeNetCall(Net.Steal and Net.Steal.CompleteSteal)
-        task.wait(0.12)
+        task.wait(0.08)
     end
 
-    local hum = getHumanoid()
-    if hum then hum.PlatformStand = false end
+    movementBypass = false
 
     if isStealComplete(fruit, fruitCountBefore) then
         StolenFruits[#StolenFruits + 1] = { name = fruit.Name .. " (" .. tostring(calculateStealValue(fruit)) .. ")", time = os.time() }
@@ -1389,37 +1756,28 @@ local function stealFruit(fruit, ownerUserId)
     return false
 end
 
-local function tryAutoSteal()
+function tryAutoSteal()
     if not genv.ftgs_AutoSteal or stealBusy or isInventoryFull() then return end
     stealBusy = true
     task.spawn(function()
         movementBypass = true
-        gardenActionLock = true
         local plot, owner = findBestStealPlot()
-        if not plot or not owner or not plotUnlocked(owner) then
-            movementBypass = false
-            gardenActionLock = false
-            stealBusy = false
-            return
+        if plot and owner and plotUnlocked(owner) then
+            local fruits = getStealableFruitsOnPlot(plot, STEAL_BATCH)
+            for i = 1, math.min(STEAL_BATCH, #fruits) do
+                if isInventoryFull() or not plotUnlocked(owner) then break end
+                stealFruit(fruits[i], owner.UserId)
+                task.wait(0.05)
+            end
         end
-        local fruits = getStealableFruitsOnPlot(plot, STEAL_BATCH)
-        for i = 1, math.min(STEAL_BATCH, #fruits) do
-            if isInventoryFull() then break end
-            if not plotUnlocked(owner) then break end
-            stealFruit(fruits[i], owner.UserId)
-            task.wait(0.15)
-        end
-        returnToGarden()
-        task.wait(1)
         movementBypass = false
-        gardenActionLock = false
         stealBusy = false
     end)
 end
 
 -- ===== PET =====
 
-local function resolveRefFromModel(model)
+function resolveRefFromModel(model)
     if not model or not WildPetFolder then return nil end
     local refName = string.match(model.Name, "^WildPet_.-_(.+)$")
     local ref = refName and WildPetFolder:FindFirstChild(refName)
@@ -1430,7 +1788,7 @@ local function resolveRefFromModel(model)
     return nil
 end
 
-local function isRefTameable(refPart)
+function isRefTameable(refPart)
     if not refPart or not refPart:IsA("BasePart") or not refPart.Parent then return false end
     local ownerId = refPart:GetAttribute("OwnerUserId")
     if ownerId == LocalPlayer.UserId then return false end
@@ -1440,7 +1798,7 @@ local function isRefTameable(refPart)
     return true
 end
 
-local function tryBuyPet()
+function tryBuyPet()
     if not genv.ftgs_AutoBuyPet or not WildPetSpawns or isCatchingPet then return end
     if os.clock() - lastPet < COOLDOWN.Pet then return end
     initMapFolders()
@@ -1453,7 +1811,7 @@ local function tryBuyPet()
         if not ref or not isRefTameable(ref) then continue end
         local root = model.PrimaryPart or model:FindFirstChild("RootPart") or model:FindFirstChildWhichIsA("BasePart")
         local price = ref:GetAttribute("Price") or 0
-        candidates[#candidates + 1] = { ref = ref, root = root, price = price, species = model:GetAttribute("PetName") }
+        candidates[#candidates + 1] = { ref = ref, root = root, model = model, price = price, species = model:GetAttribute("PetName") }
     end
     if #candidates == 0 then return end
     table.sort(candidates, function(a, b) return (a.price or 0) < (b.price or 0) end)
@@ -1464,16 +1822,37 @@ local function tryBuyPet()
     lastPet = os.clock()
     isCatchingPet = true
     task.spawn(function()
+        local tpPart = pick.root or pick.ref
+        local tpPos = tpPart and tpPart.Position
+        local prompt = (pick.model and pick.model:FindFirstChildWhichIsA("ProximityPrompt", true))
+            or (pick.ref and pick.ref:FindFirstChildWhichIsA("ProximityPrompt", true))
+        local tameRemote = Net.Pets and Net.Pets.WildPetTame
+        local function doTame()
+            if prompt then fireProximityPrompt(prompt) end
+            if tameRemote then safeNetCall(tameRemote, pick.ref) end
+        end
         movementBypass = true
-        if pick.root then tpInstant(pick.root.Position) task.wait(0.35) end
+        if tpPos then tpInstant(tpPos) end
+        task.wait(0.03)
+        doTame()
         local done, conn = false, nil
         local tr = Net.Pets and Net.Pets.WildPetTameResult
         if tr and tr.OnClientEvent then
             conn = tr.OnClientEvent:Connect(function(_, uid) if uid == LocalPlayer.UserId then done = true end end)
         end
-        safeNetCall(Net.Pets and Net.Pets.WildPetTame, pick.ref)
         local deadline = os.clock() + 2.5
-        while not done and os.clock() < deadline do task.wait(0.08) end
+        while not done and os.clock() < deadline do
+            if tpPos then
+                local hrp = getRoot()
+                if hrp then
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    hrp.AssemblyAngularVelocity = Vector3.zero
+                    hrp.CFrame = CFrame.new(tpPos + Vector3.new(0, 3, 0))
+                end
+            end
+            doTame()
+            task.wait(0.08)
+        end
         if conn then conn:Disconnect() end
         if done then trackPetBuy(getPetDisplayName(pick.species, nil), pick.price) end
         movementBypass = false
@@ -1481,7 +1860,7 @@ local function tryBuyPet()
     end)
 end
 
-local function hasIntruderOnPlot()
+function hasIntruderOnPlot()
     refreshOwnerPlot()
     local area = OwnerPlot and OwnerPlot:FindFirstChild("Visual") and OwnerPlot.Visual:FindFirstChild("PlotSizeReferenceVisual")
     if not area then return false end
@@ -1495,7 +1874,7 @@ local function hasIntruderOnPlot()
     return false
 end
 
-local function tryAntiStealGuard()
+function tryAntiStealGuard()
     if not genv.ftgs_AntiStealGuard or not hasIntruderOnPlot() then return end
     local hrp, cf = getRoot(), getPlotCenterCFrame()
     if hrp and cf then
@@ -1505,7 +1884,7 @@ local function tryAntiStealGuard()
     end
 end
 
-local function scanServerForPet(petName)
+function scanServerForPet(petName)
     if not WildPetSpawns then return false end
     for _, model in WildPetSpawns:GetChildren() do
         if model:IsA("Model") and matchesPet(model:GetAttribute("PetName"), model:GetAttribute("PetSize"), petName) then return true end
@@ -1513,7 +1892,7 @@ local function scanServerForPet(petName)
     return false
 end
 
-local function hopToRandomServer()
+function hopToRandomServer()
     local ok, servers = xpcall(function()
         return Services.HttpService:JSONDecode(universalHttpGet(
             "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
@@ -1531,7 +1910,7 @@ end
 
 -- ===== WEBHOOK / OTHER =====
 
-local function buildSeedShopText()
+function buildSeedShopText()
     local lines = {}
     for _, ch in ipairs(StockItems:GetChildren()) do
         if ch:IsA("ValueBase") and ch.Value > 0 then lines[#lines + 1] = string.format("%s | %d | %d", ch.Name, ch.Value, getSeedPrice(ch.Name)) end
@@ -1540,7 +1919,7 @@ local function buildSeedShopText()
     return #lines > 0 and table.concat(lines, "\n") or "Waiting restock..."
 end
 
-local function buildGearShopText()
+function buildGearShopText()
     local lines = {}
     for _, ch in ipairs(GearStockItems:GetChildren()) do
         if ch:IsA("ValueBase") and ch.Value > 0 then lines[#lines + 1] = string.format("%s | %d | %d", ch.Name, ch.Value, getGearPrice(ch.Name)) end
@@ -1549,14 +1928,14 @@ local function buildGearShopText()
     return #lines > 0 and table.concat(lines, "\n") or "Waiting restock..."
 end
 
-local function getWeatherInfo()
+function getWeatherInfo()
     local weather = Services.Workspace:GetAttribute("ActiveWeather") or Services.Workspace:GetAttribute("ActivePhase") or "Unknown"
     local phaseEnd = Services.Workspace:GetAttribute("PhaseDuration") or 0
     local remain = math.max(0, math.floor((phaseEnd - Services.Workspace:GetServerTimeNow()) + 0.5))
     return weather, remain
 end
 
-local function buildWebhookEmbed()
+function buildWebhookEmbed()
     local weather, remain = getWeatherInfo()
     local seedLines, gearLines, petLines, stealLines = {}, {}, {}, {}
     for name, d in BoughtSeeds do seedLines[#seedLines + 1] = name .. " | " .. d.amount .. " | " .. d.price end
@@ -1581,19 +1960,19 @@ local function buildWebhookEmbed()
     }
 end
 
-local function sendWebhook()
+function sendWebhook()
     if webhookUrl == "" then return end
     httpPost(webhookUrl, Services.HttpService:JSONEncode({ username = "NTMT HUB", embeds = { buildWebhookEmbed() } }))
 end
 
-local function trySellAll()
+function trySellAll()
     if not genv.ftgs_AutoSell or not isInventoryFull() then return end
     if os.clock() - lastSellTry < COOLDOWN.Sell then return end
     lastSellTry = os.clock()
     safeNetCall(Net.NPCS and Net.NPCS.SellAll)
 end
 
-local function tryExpand()
+function tryExpand()
     if not genv.ftgs_AutoExpand then return end
     if os.clock() - lastExpand < COOLDOWN.Expand then return end
     local owned = (PlayerReplica and PlayerReplica.Data and PlayerReplica.Data.OwnedExpansions) or 1
@@ -1605,7 +1984,7 @@ local function tryExpand()
     safeNetCall(Net.Actions and Net.Actions.ExpandGarden)
 end
 
-local function applyMovement()
+function applyMovement()
     local hum = getHumanoid()
     if not hum then return end
     hum.UseJumpPower = true
@@ -1613,7 +1992,7 @@ local function applyMovement()
     hum.JumpPower = desiredJumpPower
 end
 
-local function tryCollectMutationSeedsOnce()
+function tryCollectMutationSeedsOnce()
     if not genv.ftgs_AutoCollectMutation or collectingMutation or not SeedPackSpawns then return end
     collectingMutation = true
     task.spawn(function()
@@ -1633,7 +2012,7 @@ local function tryCollectMutationSeedsOnce()
     end)
 end
 
-local function findNearestDropPrompt()
+function findNearestDropPrompt()
     local hrp = getRoot()
     if not hrp then return nil end
     local best, bestDist
@@ -1651,7 +2030,7 @@ local function findNearestDropPrompt()
     return best
 end
 
-local function tryCollectDrops()
+function tryCollectDrops()
     if not genv.ftgs_AutoCollectDrops or collectingMutation or isCatchingPet or dropsBusy then return end
     local nearest = findNearestDropPrompt()
     if not nearest then return end
@@ -1666,7 +2045,7 @@ local function tryCollectDrops()
     end)
 end
 
-local function hexColor(hex)
+function hexColor(hex)
     if Color3.fromHex then
         local ok, c = xpcall(Color3.fromHex, noopErr, hex)
         if ok and typeof(c) == "Color3" then return c end
@@ -1675,7 +2054,7 @@ local function hexColor(hex)
     return Color3.fromRGB(tonumber(hex:sub(1, 2), 16) or 255, tonumber(hex:sub(3, 4), 16) or 255, tonumber(hex:sub(5, 6), 16) or 255)
 end
 
-local function applyUITheme(name)
+function applyUITheme(name)
     selectedUITheme = name or selectedUITheme or "Black"
     local c = UI_THEMES[selectedUITheme] or UI_THEMES.Black
     local themeName = "NTMT_" .. selectedUITheme
@@ -1707,7 +2086,7 @@ end
 
 -- ===== WINDUI =====
 
-local Window = WindUI:CreateWindow({
+Window = WindUI:CreateWindow({
     Title = "NTMT HUB | Grow a Garden 2",
     Author = MADE_BY .. " | " .. Executor,
     Folder = "ntmthub",
@@ -1720,11 +2099,11 @@ if type(Window.Tag) == "function" then
 end
 applyUITheme(selectedUITheme)
 
-local function makeToggle(tab, title, desc, key)
+function makeToggle(tab, title, desc, key)
     tab:Toggle({ Title = title, Desc = desc, Default = genv[key] or false, Callback = function(s) genv[key] = s end })
 end
 
-local function multiDropdown(tab, title, values, selected, allowNone)
+function multiDropdown(tab, title, values, selected, allowNone)
     tab:Dropdown({
         Title = title,
         Values = values,
@@ -1734,12 +2113,12 @@ local function multiDropdown(tab, title, values, selected, allowNone)
     })
 end
 
-local MainTab = Window:Tab({ Title = "Main", Icon = "home" })
+MainTab = Window:Tab({ Title = "Main", Icon = "home" })
 MainTab:Section({ Title = "Farm" })
 makeToggle(MainTab, "Auto Harvest", "Collect ripe fruit only", "ftgs_AutoHarvest")
 makeToggle(MainTab, "Auto Sell", "Sell when bag full", "ftgs_AutoSell")
 makeToggle(MainTab, "Auto Expand Garden", "Auto expand plot", "ftgs_AutoExpand")
-makeToggle(MainTab, "Auto Sprinkler", "Place near you on high-value plants", "ftgs_AutoSprinkler")
+makeToggle(MainTab, "Auto Sprinkler", "Place on rare plants (no duplicate per plant)", "ftgs_AutoSprinkler")
 multiDropdown(MainTab, "Select Sprinklers", SPRINKLER_LIST, selectedSprinklers)
 MainTab:Section({ Title = "Auto Mail" })
 MainTab:Input({ Title = "Username", Value = mailUsername, Placeholder = "recipient username", Callback = function(v) mailUsername = v or "" saveConfig() end })
@@ -1763,21 +2142,21 @@ MainTab:Input({ Title = "Mail message", Value = mailMessage, Placeholder = "mess
     saveConfig()
 end })
 
-local AutoTab = Window:Tab({ Title = "Automation", Icon = "bot" })
+AutoTab = Window:Tab({ Title = "Automation", Icon = "bot" })
 makeToggle(AutoTab, "Auto Steal", "TP fruit -> hold still until stolen", "ftgs_AutoSteal")
 makeToggle(AutoTab, "Auto Collect Drops", "TP nearest drop + pickup", "ftgs_AutoCollectDrops")
 makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Slow fly rainbow/gold/mega", "ftgs_AutoCollectMutation")
 makeToggle(AutoTab, "Auto Plant", "Near you on plot (+ edge margin)", "ftgs_AutoPlant")
-multiDropdown(AutoTab, "Plant Seeds", SeedNames, selectedPlantSeeds, false)
+multiDropdown(AutoTab, "Plant Seeds", PlantSeedNames, selectedPlantSeeds, false)
 makeToggle(AutoTab, "Auto Shovel", "Remove selected seed plants (batch)", "ftgs_AutoShovel")
 multiDropdown(AutoTab, "Shovel Seeds", SeedNames, selectedShovelSeeds, false)
 makeToggle(AutoTab, "Auto Buy Pet", "Segmented fly + tame", "ftgs_AutoBuyPet")
 multiDropdown(AutoTab, "Select Pets", PET_LIST, selectedPets, false)
 
-local ShopTab = Window:Tab({ Title = "Shop", Icon = "shopping-cart" })
+ShopTab = Window:Tab({ Title = "Shop", Icon = "shopping-cart" })
 makeToggle(ShopTab, "Auto Buy Seed", "Fast seed buy", "ftgs_AutoBuySeed")
 makeToggle(ShopTab, "Auto Buy All Seed", "Buy all in stock", "ftgs_AutoBuyAllSeed")
-ShopTab:Dropdown({ Title = "Select Seeds", Values = SeedNames, Multi = true, AllowNone = true, Callback = function(sel)
+ShopTab:Dropdown({ Title = "Select Seeds", Values = PlantSeedNames, Multi = true, AllowNone = true, Callback = function(sel)
     table.clear(selectedBuySeeds)
     if type(sel) == "table" then for k, v in pairs(sel) do
         if type(v) == "string" then selectedBuySeeds[v] = true elseif type(k) == "string" and v then selectedBuySeeds[k] = true end
@@ -1792,11 +2171,11 @@ ShopTab:Dropdown({ Title = "Select Gears", Values = GearNames, Multi = true, All
     end end
 end })
 ShopTab:Section({ Title = "Seed Shop (live)" })
-local seedShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
+seedShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
 ShopTab:Section({ Title = "Gear Shop (live)" })
-local gearShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
+gearShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
 
-local ServerTab = Window:Tab({ Title = "Server Hop", Icon = "globe" })
+ServerTab = Window:Tab({ Title = "Server Hop", Icon = "globe" })
 makeToggle(ServerTab, "Auto Hop Server", "Hop every 30s", "ftgs_AutoHop")
 ServerTab:Button({ Title = "Hop Server (1 click)", Icon = "shuffle", Callback = function() hopToRandomServer() end })
 ServerTab:Button({ Title = "Rejoin Server", Icon = "refresh-cw", Callback = function()
@@ -1813,7 +2192,7 @@ ServerTab:Dropdown({ Title = "Pet to Find", Values = PET_LIST, Value = selectedF
     selectedFindPet = v or selectedFindPet
 end })
 
-local SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings" })
+SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings" })
 SettingsTab:Section({ Title = "UI Theme" })
 SettingsTab:Dropdown({ Title = "UI Color", Values = UI_THEME_NAMES, Value = selectedUITheme, Callback = function(v)
     if type(v) == "table" then v = v[1] end
@@ -1838,7 +2217,7 @@ SettingsTab:Slider({ Title = "Jump Power", Step = 1, Value = { Min = 50, Max = 5
 makeToggle(SettingsTab, "Anti Hit", "No knockback from shovel", "ftgs_AntiHit")
 makeToggle(SettingsTab, "Anti Steal Guard", "Lock plot when intruder enters", "ftgs_AntiStealGuard")
 
-local InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
+InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
 InfoTab:Paragraph({ Title = "Discord", Desc = DISCORD_LINK })
 InfoTab:Button({ Title = "Copy Discord Link", Icon = "copy", Callback = function()
     if setclipboard then xpcall(setclipboard, noopErr, DISCORD_LINK) end
@@ -1846,12 +2225,13 @@ InfoTab:Button({ Title = "Copy Discord Link", Icon = "copy", Callback = function
 end })
 InfoTab:Paragraph({ Title = "Executor", Desc = Executor })
 InfoTab:Paragraph({ Title = "Roblox User", Desc = LocalPlayer.Name })
-local activePara = InfoTab:Paragraph({ Title = "Active", Desc = "0h 00m 00s" })
+activePara = InfoTab:Paragraph({ Title = "Active", Desc = "0h 00m 00s" })
 InfoTab:Paragraph({ Title = "Made by", Desc = MADE_BY })
 
 -- ===== LOOPS =====
 
-local function safeLoop(fn)
+
+function safeLoop(fn)
     xpcall(fn, noopErr)
 end
 
@@ -1866,7 +2246,7 @@ end)
 task.spawn(function()
     while true do
         if genv.ftgs_AutoSteal and not stealBusy then safeLoop(tryAutoSteal) end
-        task.wait(stealBusy and 0.3 or 2.5)
+        task.wait(stealBusy and 0.2 or 0.8)
     end
 end)
 
@@ -2033,6 +2413,14 @@ task.spawn(function()
 end)
 
 print("[NTMT HUB v6.0] Loaded | " .. Executor)
+
+pcall(function()
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "NTMT HUB",
+        Text = "Loaded! Tap NTMT HUB (left side)",
+        Duration = 6,
+    })
+end)
 
 end -- runMain
 
