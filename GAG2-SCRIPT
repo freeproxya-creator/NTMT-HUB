@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.4 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.4")
+--[[ NTMT HUB - Grow a Garden 2 v6.5 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.5")
 
 pcall(function()
     if delfile and isfile then
@@ -525,37 +525,36 @@ end
 
 local function httpPost(url, body)
     if type(url) ~= "string" or url == "" or type(body) ~= "string" then return false end
-    local req = (syn and syn.request) or (http and http.request) or http_request or request
+    local headers = { ["Content-Type"] = "application/json", ["content-type"] = "application/json" }
+    local req = request or (syn and syn.request) or (http and http.request) or http_request
     if fluxus and fluxus.request then req = fluxus.request end
     if type(req) == "function" then
         local ok, res = xpcall(function()
-            return req({
-                Url = url,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json", ["content-type"] = "application/json" },
-                Body = body,
-            })
+            return req({ Url = url, Method = "POST", Headers = headers, Body = body })
         end, noopErr)
         if ok then
+            if res == true or res == nil then return true end
             local code = res and (res.StatusCode or res.status or res.Status)
-            if type(code) == "number" then return code >= 200 and code < 300 end
+            if type(code) == "number" then return code >= 200 and code < 400 end
             return true
         end
     end
+    if http and type(http.post) == "function" then
+        local ok = xpcall(function() http.post(url, body, "application/json") end, noopErr)
+        if ok then return true end
+    end
     if type(game.HttpPost) == "function" then
-        return xpcall(function()
-            game:HttpPost(url, body, Enum.HttpContentType.ApplicationJson, false)
-        end, noopErr)
+        local ok = xpcall(function() game:HttpPost(url, body, Enum.HttpContentType.ApplicationJson, false) end, noopErr)
+        if ok then return true end
     end
     local hs = game:GetService("HttpService")
-    if hs and type(hs.RequestAsync) == "function" then
+    if hs then
         local ok = xpcall(function()
-            hs:RequestAsync({
-                Url = url,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = body,
-            })
+            hs:PostAsync(url, body, Enum.HttpContentType.ApplicationJson, false)
+        end, noopErr)
+        if ok then return true end
+        ok = xpcall(function()
+            hs:RequestAsync({ Url = url, Method = "POST", Headers = headers, Body = body })
         end, noopErr)
         if ok then return true end
     end
@@ -859,6 +858,10 @@ lastStockSnapshot = {}
 fruitEspFolder, fruitEspHighlight, fruitEspBillboard = nil, nil, nil
 savedLighting, fullbrightStepConn = nil, nil
 movementHumConn, movementJumpConn = nil, nil
+antiKbConn = nil
+ANTI_KB_PERCENT = 0.05
+translateBusy = false
+lastClientMovePos = nil
 hitboxOriginalProps, defendHitboxActive = {}, false
 translateLanguage = "English"
 translationRegistry, translationCache = {}, {}
@@ -2575,10 +2578,43 @@ end
 
 -- ===== WEBHOOK / OTHER =====
 
+function formatCompactNumber(amount)
+    amount = math.floor(tonumber(amount) or 0)
+    if amount >= 1000000000 then
+        local v = math.floor(amount / 1000000000 * 10 + 0.5) / 10
+        return (v == math.floor(v) and string.format("%db", math.floor(v)) or string.format("%gb", v))
+    end
+    if amount >= 1000000 then
+        local v = math.floor(amount / 1000000 * 10 + 0.5) / 10
+        return (v == math.floor(v) and string.format("%dm", math.floor(v)) or string.format("%gm", v))
+    end
+    if amount >= 1000 then
+        local v = math.floor(amount / 1000 * 10 + 0.5) / 10
+        return (v == math.floor(v) and string.format("%dk", math.floor(v)) or string.format("%gk", v))
+    end
+    return tostring(amount)
+end
+
+function formatPlayTimeCompact(totalSec)
+    totalSec = math.max(0, math.floor(totalSec or 0))
+    local h = math.floor(totalSec / 3600)
+    local m = math.floor((totalSec % 3600) / 60)
+    local s = totalSec % 60
+    if h > 0 then return string.format("%dh%dm%ds", h, m, s) end
+    if m > 0 then return string.format("%dm%ds", m, s) end
+    return string.format("%ds", s)
+end
+
+function formatShopStockLine(name, amount, price)
+    return string.format("%s x%d %s coin", string.lower(tostring(name)), tonumber(amount) or 0, formatCompactNumber(price))
+end
+
 function buildSeedShopText()
     local lines = {}
     for _, ch in ipairs(StockItems:GetChildren()) do
-        if ch:IsA("ValueBase") and ch.Value > 0 then lines[#lines + 1] = string.format("%s | %d | %d", ch.Name, ch.Value, getSeedPrice(ch.Name)) end
+        if ch:IsA("ValueBase") and ch.Value > 0 then
+            lines[#lines + 1] = formatShopStockLine(ch.Name, ch.Value, getSeedPrice(ch.Name))
+        end
     end
     table.sort(lines)
     return #lines > 0 and table.concat(lines, "\n") or "Waiting restock..."
@@ -2587,40 +2623,117 @@ end
 function buildGearShopText()
     local lines = {}
     for _, ch in ipairs(GearStockItems:GetChildren()) do
-        if ch:IsA("ValueBase") and ch.Value > 0 then lines[#lines + 1] = string.format("%s | %d | %d", ch.Name, ch.Value, getGearPrice(ch.Name)) end
+        if ch:IsA("ValueBase") and ch.Value > 0 then
+            lines[#lines + 1] = formatShopStockLine(ch.Name, ch.Value, getGearPrice(ch.Name))
+        end
     end
     table.sort(lines)
     return #lines > 0 and table.concat(lines, "\n") or "Waiting restock..."
 end
 
 function getWeatherInfo()
-    local weather = Services.Workspace:GetAttribute("ActiveWeather") or Services.Workspace:GetAttribute("ActivePhase") or "Unknown"
-    local phaseEnd = Services.Workspace:GetAttribute("PhaseDuration") or 0
-    local remain = math.max(0, math.floor((phaseEnd - Services.Workspace:GetServerTimeNow()) + 0.5))
-    return weather, remain
+    local ws = Services.Workspace
+    local rs = Services.ReplicatedStorage
+    local weather = ws:GetAttribute("ActiveWeather") or rs:GetAttribute("ActiveWeather")
+    local phase = ws:GetAttribute("ActivePhase") or rs:GetAttribute("ActivePhase")
+    local display = weather
+    if type(display) ~= "string" or display == "" or display == "Day" or display == "Night" then
+        display = phase or weather or "Unknown"
+    end
+    if type(weather) == "string" and weather ~= "" and weather ~= "Day" and weather ~= "Night" and weather ~= phase then
+        display = weather
+    end
+    local phaseEnd = ws:GetAttribute("PhaseDuration") or ws:GetAttribute("WeatherEndTime") or ws:GetAttribute("WeatherEnd") or 0
+    local remain = math.max(0, math.floor((phaseEnd - ws:GetServerTimeNow()) + 0.5))
+    return tostring(display), remain
+end
+
+function buildBoughtCountLines(boughtTable)
+    local lines = {}
+    for name, d in boughtTable do
+        if type(d) == "table" then
+            lines[#lines + 1] = string.format("%s x%d", name, d.amount or 1)
+        end
+    end
+    table.sort(lines)
+    return #lines > 0 and table.concat(lines, "\n") or "none"
+end
+
+function buildInventorySeedLines()
+    local inv = PlayerReplica and PlayerReplica.Data and PlayerReplica.Data.Inventory
+    local bucket = inv and inv.Seeds
+    if type(bucket) ~= "table" then return "none" end
+    local lines = {}
+    for name, count in pairs(bucket) do
+        if type(count) == "number" and count > 0 then lines[#lines + 1] = string.format("%s x%d", name, count) end
+    end
+    table.sort(lines)
+    return #lines > 0 and table.concat(lines, "\n") or "none"
+end
+
+function buildInventoryGearLines()
+    local inv = PlayerReplica and PlayerReplica.Data and PlayerReplica.Data.Inventory
+    if type(inv) ~= "table" then return "none" end
+    local lines = {}
+    for _, cat in MAIL_GEAR_CATEGORIES do
+        local bucket = inv[cat]
+        if type(bucket) == "table" then
+            for name, count in pairs(bucket) do
+                if type(count) == "number" and count > 0 then lines[#lines + 1] = string.format("%s x%d", name, count) end
+            end
+        end
+    end
+    table.sort(lines)
+    return #lines > 0 and table.concat(lines, "\n") or "none"
+end
+
+function buildInventoryPetLines()
+    local inv = PlayerReplica and PlayerReplica.Data and PlayerReplica.Data.Inventory
+    local bucket = inv and inv.Pets
+    if type(bucket) ~= "table" then return "none" end
+    local counts = {}
+    for _, entry in pairs(bucket) do
+        if type(entry) == "table" then
+            local name = entry.Name or entry.PetName or "Pet"
+            counts[name] = (counts[name] or 0) + 1
+        end
+    end
+    local lines = {}
+    for name, count in pairs(counts) do lines[#lines + 1] = string.format("%s x%d", name, count) end
+    table.sort(lines)
+    return #lines > 0 and table.concat(lines, "\n") or "none"
 end
 
 function buildWebhookEmbed()
     local weather, remain = getWeatherInfo()
-    local seedLines, gearLines, petLines, stealLines = {}, {}, {}, {}
-    for name, d in BoughtSeeds do seedLines[#seedLines + 1] = name .. " | " .. d.amount .. " | " .. d.price end
-    for name, d in BoughtGears do gearLines[#gearLines + 1] = name .. " | " .. d.amount .. " | " .. d.price end
-    for name, d in BoughtPets do petLines[#petLines + 1] = name .. " | " .. d.amount .. " | " .. d.price end
-    for _, s in StolenFruits do stealLines[#stealLines + 1] = s.name .. " - " .. timeAgo(s.time) end
     local playSec = totalPlaySeconds + (os.time() - sessionStart)
+    local desc = table.concat({
+        "** NTMT HUB | " .. LocalPlayer.Name .. " **",
+        "** weather **",
+        weather .. " | **" .. formatPlayTimeCompact(remain) .. "**",
+        "",
+        "** seed | gear bought **",
+        buildBoughtCountLines(BoughtSeeds),
+        buildBoughtCountLines(BoughtGears),
+        "",
+        "** inventory **",
+        "** seeds right now**",
+        buildInventorySeedLines(),
+        "--------------------------",
+        "** gears right now **",
+        buildInventoryGearLines(),
+        "--------------------------",
+        "** pets right now **",
+        buildInventoryPetLines(),
+        "=========================",
+        "** sheckles: ** " .. formatCompactNumber(getSheckles()),
+        "** total played time: ** " .. formatPlayTimeCompact(playSec),
+    }, "\n")
     return {
-        title = LocalPlayer.Name,
+        title = "NTMT HUB",
+        description = desc,
         color = 0x30FF6A,
-        fields = {
-            { name = "** WEATHER **", value = weather .. "\nEnd in: " .. formatDuration(remain), inline = false },
-            { name = "** seed bought **", value = #seedLines > 0 and table.concat(seedLines, "\n") or "none", inline = false },
-            { name = "** gear bought **", value = #gearLines > 0 and table.concat(gearLines, "\n") or "none", inline = false },
-            { name = "** pet bought **", value = #petLines > 0 and table.concat(petLines, "\n") or "none", inline = false },
-            { name = "** fruit steal **", value = #stealLines > 0 and table.concat(stealLines, "\n") or "none", inline = false },
-            { name = "** sheckles **", value = tostring(getSheckles()), inline = true },
-            { name = "** total play time: **", value = formatDuration(playSec), inline = true },
-        },
-        footer = { text = "made by ntmthub - " .. DISCORD_LINK },
+        footer = { text = "made by NTMT HUB | " .. string.gsub(DISCORD_LINK, "^https?://", "") },
         timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     }
 end
@@ -2630,14 +2743,15 @@ function formatMinutesSeconds(totalSec)
     return string.format("%dm%02ds", math.floor(totalSec / 60), totalSec % 60)
 end
 
-function translateUiText(text)
-    if not genv.ftgs_AutoTranslate or type(text) ~= "string" or text == "" then return text end
-    local code = TRANSLATE_LANG_CODES[translateLanguage] or "en"
-    local cacheKey = code .. ":" .. text
+function translateUiText(text, langCode)
+    if type(text) ~= "string" or text == "" then return text end
+    langCode = langCode or TRANSLATE_LANG_CODES[translateLanguage] or "en"
+    if langCode == "en" then return text end
+    local cacheKey = langCode .. ":" .. text
     if translationCache[cacheKey] then return translationCache[cacheKey] end
     local ok, result = xpcall(function()
-        local url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl="
-            .. code .. "&dt=t&q=" .. Services.HttpService:UrlEncode(text)
+        local url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl="
+            .. langCode .. "&dt=t&q=" .. Services.HttpService:UrlEncode(text)
         local body = universalHttpGet(url)
         if not body then return text end
         local decoded = Services.HttpService:JSONDecode(body)
@@ -2656,45 +2770,98 @@ function translateUiText(text)
     return text
 end
 
-function registerUiTextInstance(inst)
-    if not inst or (not inst:IsA("TextLabel") and not inst:IsA("TextButton") and not inst:IsA("TextBox")) then return end
-    if translationRegistry[inst] then return end
-    local data = { original = inst.Text, translating = false }
-    translationRegistry[inst] = data
-    inst:GetPropertyChangedSignal("Text"):Connect(function()
-        if data.translating then return end
-        data.original = inst.Text
-        if genv.ftgs_AutoTranslate and data.original ~= "" then
-            task.spawn(function()
-                data.translating = true
-                inst.Text = translateUiText(data.original)
-                data.translating = false
-            end)
+function rescanUiTextRegistry()
+    local roots = {}
+    pcall(function() roots[#roots + 1] = LocalPlayer.PlayerGui end)
+    pcall(function() roots[#roots + 1] = game:GetService("CoreGui") end)
+    for _, root in roots do
+        for _, d in root:GetDescendants() do
+            if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+                if not translationRegistry[d] then registerUiTextInstance(d) end
+            end
         end
-    end)
-    if genv.ftgs_AutoTranslate and data.original ~= "" then
-        task.spawn(function()
-            data.translating = true
-            inst.Text = translateUiText(data.original)
-            data.translating = false
-        end)
     end
 end
 
-function refreshAllUiTranslations()
-    for inst, data in translationRegistry do
-        if not inst or not inst.Parent then
-            translationRegistry[inst] = nil
-        elseif genv.ftgs_AutoTranslate then
-            task.spawn(function()
-                data.translating = true
-                inst.Text = translateUiText(data.original)
-                data.translating = false
-            end)
-        else
-            inst.Text = data.original
+function registerUiTextInstance(inst)
+    if not inst or (not inst:IsA("TextLabel") and not inst:IsA("TextButton") and not inst:IsA("TextBox")) then return end
+    if translationRegistry[inst] then return end
+    local data = { original = inst.Text or "", translating = false }
+    translationRegistry[inst] = data
+    inst:GetPropertyChangedSignal("Text"):Connect(function()
+        if data.translating then return end
+        if inst.Text ~= data.original and not genv.ftgs_AutoTranslate then
+            data.original = inst.Text
+        elseif genv.ftgs_AutoTranslate and inst.Text == data.original then
+            return
+        elseif not genv.ftgs_AutoTranslate then
+            data.original = inst.Text
         end
+    end)
+end
+
+function fastTranslateAllUi()
+    if translateBusy then return end
+    if not genv.ftgs_AutoTranslate then
+        for inst, data in translationRegistry do
+            if inst and inst.Parent then
+                data.translating = true
+                inst.Text = data.original
+                data.translating = false
+            end
+        end
+        return
     end
+    translateBusy = true
+    task.spawn(function()
+        rescanUiTextRegistry()
+        local code = TRANSLATE_LANG_CODES[translateLanguage] or "vi"
+        if code == "en" then translateBusy = false return end
+        local unique, map = {}, {}
+        for inst, data in translationRegistry do
+            if inst and inst.Parent and data.original and data.original ~= "" then
+                if not map[data.original] then
+                    map[data.original] = {}
+                    unique[#unique + 1] = data.original
+                end
+                map[data.original][#map[data.original] + 1] = inst
+            end
+        end
+        local translated, doneCount = {}, 0
+        local total = #unique
+        local batchSize = 20
+        for i = 1, total, batchSize do
+            local batchEnd = math.min(i + batchSize - 1, total)
+            for j = i, batchEnd do
+                local text = unique[j]
+                task.spawn(function()
+                    translated[text] = translateUiText(text, code)
+                    doneCount += 1
+                end)
+            end
+            local deadline = os.clock() + 0.35
+            while doneCount < batchEnd and os.clock() < deadline do task.wait(0.02) end
+        end
+        local waitDeadline = os.clock() + 3
+        while doneCount < total and os.clock() < waitDeadline do task.wait(0.03) end
+        for text, insts in map do
+            local out = translated[text] or text
+            for _, inst in insts do
+                local data = translationRegistry[inst]
+                if data and inst.Parent then
+                    data.translating = true
+                    inst.Text = out
+                    data.translating = false
+                end
+            end
+        end
+        translateBusy = false
+        hubNotify("Translate", "UI → " .. translateLanguage)
+    end)
+end
+
+function refreshAllUiTranslations()
+    fastTranslateAllUi()
 end
 
 function setupUiTranslationWatcher()
@@ -2925,58 +3092,56 @@ function applyMovementBypass(dt)
     local hum = getHumanoid()
     local hrp = getRoot()
     if not hum or not hrp then return end
+    dt = dt or 0.016
     applyMovement()
     local dir = hum.MoveDirection
-    if dir.Magnitude > 0.05 and desiredWalkSpeed > 16 then
+    if dir.Magnitude > 0.05 then
         local flat = Vector3.new(dir.X, 0, dir.Z)
         if flat.Magnitude > 0.01 then
             flat = flat.Unit
             local speed = desiredWalkSpeed
-            hrp.AssemblyLinearVelocity = Vector3.new(flat.X * speed, hrp.AssemblyLinearVelocity.Y, flat.Z * speed)
+            local vel = Vector3.new(flat.X * speed, hrp.AssemblyLinearVelocity.Y, flat.Z * speed)
+            hrp.AssemblyLinearVelocity = vel
+            pcall(function() hrp.Velocity = vel end)
+            if lastClientMovePos then
+                local snapBack = (hrp.Position - lastClientMovePos).Magnitude
+                if snapBack > 5 and dir.Magnitude > 0.08 then
+                    local push = hrp.CFrame.Position + flat * speed * dt * 3
+                    hrp.CFrame = CFrame.new(push + Vector3.new(0, 0.2, 0))
+                    hrp.AssemblyLinearVelocity = vel
+                    pcall(function() hrp.Velocity = vel end)
+                end
+            end
+            lastClientMovePos = hrp.Position
             lastKnownMoveCF = hrp.CFrame
         end
-    elseif dir.Magnitude <= 0.05 then
+    else
+        lastClientMovePos = hrp.Position
+        lastKnownMoveCF = hrp.CFrame
         hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
         hrp.AssemblyAngularVelocity = Vector3.zero
     end
 end
 
-function playerHasShovelEquipped(plr)
-    local char = plr and plr.Character
-    if not char then return false end
-    for _, item in char:GetChildren() do
-        if item:IsA("Tool") and (item:GetAttribute("Shovel") or string.find(item.Name, "Shovel", 1, true)) then
-            return true
+function setupAntiKnockbackChar(char)
+    if antiKbConn then antiKbConn:Disconnect() antiKbConn = nil end
+    if not char then return end
+    local hrp = char:WaitForChild("HumanoidRootPart", 8)
+    if not hrp then return end
+    local function dampenKnockback(v)
+        if not genv.ftgs_AntiHit then return end
+        if v:IsA("BodyVelocity") then
+            v.Velocity = v.Velocity * ANTI_KB_PERCENT
+        elseif v:IsA("LinearVelocity") then
+            v.VectorVelocity = v.VectorVelocity * ANTI_KB_PERCENT
+        elseif v:IsA("VectorForce") then
+            v.Force = v.Force * ANTI_KB_PERCENT
+        elseif v:IsA("BodyForce") then
+            v.Force = v.Force * ANTI_KB_PERCENT
         end
     end
-    return false
-end
-
-function tryAntiShovelKnockback()
-    if not genv.ftgs_AntiHit then return end
-    if movementBypass or gardenActionLock or isCatchingPet or stealBusy then return end
-    local hrp = getRoot()
-    local hum = getHumanoid()
-    if not hrp or not hum then return end
-    local shovelNearby = false
-    for _, plr in Services.Players:GetPlayers() do
-        if plr ~= LocalPlayer and playerHasShovelEquipped(plr) then
-            local ohrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
-            if ohrp and (ohrp.Position - hrp.Position).Magnitude <= 50 then
-                shovelNearby = true
-                break
-            end
-        end
-    end
-    local vel = hrp.AssemblyLinearVelocity
-    local knocked = vel.Magnitude > 45 or math.abs(vel.Y) > 35
-    if shovelNearby or knocked then
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        if hum:GetState() == Enum.HumanoidStateType.Physics or hum:GetState() == Enum.HumanoidStateType.Freefall then
-            hum:ChangeState(Enum.HumanoidStateType.Running)
-        end
-    end
+    for _, child in hrp:GetChildren() do dampenKnockback(child) end
+    antiKbConn = hrp.ChildAdded:Connect(dampenKnockback)
 end
 
 function setFullbright(on)
@@ -3103,46 +3268,64 @@ end
 
 function getPetExpireRemaining(ref, model)
     local now = Services.Workspace:GetServerTimeNow()
-    local despawn = nil
-    if ref then
-        despawn = ref:GetAttribute("DespawnTime") or ref:GetAttribute("ExpireTime") or ref:GetAttribute("DespawnAt")
-            or ref:GetAttribute("LifetimeEnd")
+    local function scanSource(source)
+        if not source then return nil end
+        local keys = {
+            "DespawnTime", "ExpireTime", "DespawnAt", "LifetimeEnd", "EndTime",
+            "DespawnAtTime", "TameDeadline", "RemovalTime", "DeleteTime",
+        }
+        for _, k in keys do
+            local v = source:GetAttribute(k)
+            if type(v) == "number" then return math.max(0, math.floor(v - now + 0.5)) end
+        end
+        local spawn = source:GetAttribute("SpawnTime") or source:GetAttribute("CreatedAt") or source:GetAttribute("SpawnedAt")
+        local life = source:GetAttribute("Lifetime") or source:GetAttribute("Duration") or source:GetAttribute("DespawnDelay")
+        if type(spawn) == "number" and type(life) == "number" then
+            return math.max(0, math.floor(spawn + life - now + 0.5))
+        end
+        for _, ch in source:GetChildren() do
+            if (ch:IsA("NumberValue") or ch:IsA("IntValue")) and string.find(string.lower(ch.Name), "despawn", 1, true) then
+                return math.max(0, math.floor(ch.Value - now + 0.5))
+            end
+        end
+        return nil
     end
-    if type(despawn) ~= "number" and model then
-        despawn = model:GetAttribute("DespawnTime") or model:GetAttribute("ExpireTime") or model:GetAttribute("DespawnAt")
-    end
-    if type(despawn) == "number" then
-        return math.max(0, math.floor(despawn - now + 0.5))
-    end
-    return nil
+    return scanSource(ref) or scanSource(model)
 end
 
 function collectWildPetSpawnText()
     initMapFolders()
-    local blocks = {}
+    local lines = {}
     if not WildPetSpawns then return "none" end
     for _, model in WildPetSpawns:GetChildren() do
         if not model:IsA("Model") then continue end
         local ref = resolveRefFromModel(model)
         local name = getPetDisplayName(model:GetAttribute("PetName"), model:GetAttribute("PetSize"))
-        local price = ref and ref:GetAttribute("Price") or "?"
+        local price = ref and ref:GetAttribute("Price") or model:GetAttribute("Price") or "?"
         local expire = getPetExpireRemaining(ref, model)
         local expireStr = expire and formatMinutesSeconds(expire) or "?"
-        blocks[#blocks + 1] = string.format("%s\n%s\nexpire in %s", name, tostring(price), expireStr)
+        lines[#lines + 1] = string.format("%s %s expire in %s", name, formatCompactNumber(price), expireStr)
     end
-    table.sort(blocks)
-    return #blocks > 0 and table.concat(blocks, "\n\n") or "none"
+    table.sort(lines)
+    return #lines > 0 and table.concat(lines, "\n") or "none"
 end
 
 function buildPetShopWebhookEmbed()
+    initMapFolders()
+    local desc = table.concat({
+        "** PET SPAWN **",
+        collectWildPetSpawnText(),
+        "",
+        "** SEED SHOP STOCK **",
+        buildSeedShopText(),
+        "",
+        "** GEAR SHOP STOCK **",
+        buildGearShopText(),
+    }, "\n")
     return {
         title = "NTMT HUB | Pet & Shop",
+        description = desc,
         color = 0xFF4FD8,
-        fields = {
-            { name = "PET SPAWN", value = collectWildPetSpawnText(), inline = false },
-            { name = "SEED SHOP STOCK", value = buildSeedShopText(), inline = false },
-            { name = "GEAR SHOP STOCK", value = buildGearShopText(), inline = false },
-        },
         footer = { text = "JobId: " .. tostring(game.JobId) },
         timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -3150,6 +3333,7 @@ end
 
 function sendPetShopWebhook()
     if webhookPetShopUrl == "" then return false end
+    initMapFolders()
     return httpPost(webhookPetShopUrl, Services.HttpService:JSONEncode({
         username = "NTMT HUB",
         embeds = { buildPetShopWebhookEmbed() },
@@ -3266,7 +3450,12 @@ end
 
 function sendWebhook()
     if webhookUrl == "" then return false end
-    return httpPost(webhookUrl, Services.HttpService:JSONEncode({ username = "NTMT HUB", embeds = { buildWebhookEmbed() } }))
+    local payload = Services.HttpService:JSONEncode({
+        username = "NTMT HUB",
+        avatar_url = "https://cdn.discordapp.com/embed/avatars/0.png",
+        embeds = { buildWebhookEmbed() },
+    })
+    return httpPost(webhookUrl, payload)
 end
 
 function trySellAll()
@@ -3376,7 +3565,7 @@ Window = WindUI:CreateWindow({
     OpenButton = { Title = "NTMT HUB", Enabled = true, Draggable = true, Scale = 0.5 },
 })
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.4", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.5", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
 
@@ -3530,7 +3719,10 @@ end })
 SettingsTab:Slider({ Title = "Walk Speed", Step = 1, Value = { Min = 16, Max = 250, Default = 16 }, Callback = function(v) desiredWalkSpeed = v applyMovement() end })
 SettingsTab:Slider({ Title = "Jump Power", Step = 1, Value = { Min = 50, Max = 500, Default = 50 }, Callback = function(v) desiredJumpPower = v applyMovement() end })
 makeToggle(SettingsTab, "Bypass Movement AC", "Client velocity + anti snap (high walkspeed)", "ftgs_BypassMovement")
-makeToggle(SettingsTab, "Anti Hit", "No shovel knockback when player nearby", "ftgs_AntiHit")
+SettingsTab:Toggle({ Title = "Anti Hit", Desc = "Dampen shovel knockback (BodyVelocity)", Default = genv.ftgs_AntiHit or false, Callback = function(s)
+    genv.ftgs_AntiHit = s
+    if s and LocalPlayer.Character then setupAntiKnockbackChar(LocalPlayer.Character) end
+end })
 SettingsTab:Section({ Title = "Visual" })
 SettingsTab:Toggle({ Title = "Fullbright", Desc = "Night looks like day", Default = genv.ftgs_Fullbright or false, Callback = function(s) setFullbright(s) end })
 SettingsTab:Toggle({ Title = "Fruit ESP", Desc = "Highlight highest value fruit on server", Default = genv.ftgs_FruitESP ~= false, Callback = function(s) genv.ftgs_FruitESP = s if not s then clearFruitEsp() end end })
@@ -3547,17 +3739,17 @@ SettingsTab:Toggle({ Title = "Auto Execute", Desc = "Re-run script after rejoin/
     cacheScriptSourceForAutoExec()
 end })
 SettingsTab:Section({ Title = "Auto Translate" })
-SettingsTab:Toggle({ Title = "Auto Translate UI", Desc = "Translate menu text", Default = genv.ftgs_AutoTranslate or false, Callback = function(s)
+SettingsTab:Toggle({ Title = "Auto Translate UI", Desc = "Translate all UI in ~2-3s", Default = genv.ftgs_AutoTranslate or false, Callback = function(s)
     genv.ftgs_AutoTranslate = s
     saveConfig()
-    refreshAllUiTranslations()
+    fastTranslateAllUi()
 end })
 SettingsTab:Dropdown({ Title = "Language", Values = TRANSLATE_LANG_NAMES, Value = translateLanguage, Callback = function(v)
     if type(v) == "table" then v = v[1] end
     translateLanguage = v or translateLanguage
     table.clear(translationCache)
     saveConfig()
-    refreshAllUiTranslations()
+    fastTranslateAllUi()
 end })
 makeToggle(SettingsTab, "Anti Steal Guard", "Lock plot when intruder enters", "ftgs_AntiStealGuard")
 
@@ -3718,20 +3910,28 @@ task.spawn(function()
             local hum = getHumanoid()
             if hrp and hum and lastKnownMoveCF and hum.MoveDirection.Magnitude > 0.08 then
                 local snap = (hrp.Position - lastKnownMoveCF.Position).Magnitude
-                if snap > 10 then
-                    hrp.CFrame = lastKnownMoveCF
-                    hrp.AssemblyLinearVelocity = Vector3.zero
+                if snap > 8 then
+                    local dir = hum.MoveDirection
+                    if dir.Magnitude > 0.05 then
+                        local flat = Vector3.new(dir.X, 0, dir.Z).Unit
+                        local push = lastKnownMoveCF.Position + flat * desiredWalkSpeed * 0.05
+                        hrp.CFrame = CFrame.new(push + Vector3.new(0, 3, 0))
+                    else
+                        hrp.CFrame = lastKnownMoveCF
+                    end
+                    local vel = Vector3.new(dir.X * desiredWalkSpeed, hrp.AssemblyLinearVelocity.Y, dir.Z * desiredWalkSpeed)
+                    hrp.AssemblyLinearVelocity = vel
                     hrp.AssemblyAngularVelocity = Vector3.zero
+                    pcall(function() hrp.Velocity = vel end)
                 end
             end
         end
-        task.wait(0.03)
+        task.wait(0.02)
     end
 end)
 
 task.spawn(function()
     while true do
-        safeLoop(tryAntiShovelKnockback)
         if genv.ftgs_AntiStealGuard and not gardenActionLock and not stealBusy then safeLoop(tryAntiStealGuard) end
         task.wait(0.05)
     end
@@ -3799,8 +3999,12 @@ if LocalPlayer then
     LocalPlayer.CharacterAdded:Connect(function(char)
         task.wait(0.3)
         bindCharacterMovement(char)
+        setupAntiKnockbackChar(char)
     end)
-    if LocalPlayer.Character then bindCharacterMovement(LocalPlayer.Character) end
+    if LocalPlayer.Character then
+        bindCharacterMovement(LocalPlayer.Character)
+        setupAntiKnockbackChar(LocalPlayer.Character)
+    end
 end
 
 setupShopRestockWatch()
@@ -3809,7 +4013,17 @@ setupAutoExecute()
 if genv.ftgs_FixLag then startFixLag() end
 task.defer(function()
     xpcall(setupUiTranslationWatcher, noopErr)
-    if genv.ftgs_AutoTranslate then refreshAllUiTranslations() end
+    task.wait(1.5)
+    if genv.ftgs_AutoTranslate then fastTranslateAllUi() end
+end)
+
+task.spawn(function()
+    while true do
+        if genv.ftgs_AutoTranslate and not translateBusy then
+            rescanUiTextRegistry()
+        end
+        task.wait(4)
+    end
 end)
 
 task.spawn(function()
@@ -3821,7 +4035,7 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v6.4] Loaded | " .. Executor)
+print("[NTMT HUB v6.5] Loaded | " .. Executor)
 
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
