@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.8 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.8")
+--[[ NTMT HUB - Grow a Garden 2 v6.9 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.9")
 
 pcall(function()
     if delfile and isfile then
@@ -644,6 +644,8 @@ Services = {
     Workspace = cloneref(game:GetService("Workspace")),
     CollectionService = cloneref(game:GetService("CollectionService")),
     VirtualUser = cloneref(game:GetService("VirtualUser")),
+    UserInputService = cloneref(game:GetService("UserInputService")),
+    VirtualInputManager = cloneref(game:GetService("VirtualInputManager")),
     TeleportService = cloneref(game:GetService("TeleportService")),
     HttpService = cloneref(game:GetService("HttpService")),
     RunService = cloneref(game:GetService("RunService")),
@@ -824,7 +826,18 @@ genv.ftgs_AutoFavoriteAll = false
 genv.ftgs_AutoUnfavoriteAll = false
 genv.ftgs_BypassMovement = true
 genv.ftgs_Fullbright = false
-genv.ftgs_FruitESP = true
+genv.ftgs_FruitESP = false
+genv.ftgs_AutoHarvestBest = false
+autoClickSpeed = 0.04
+moonPredictGui = nil
+MOON_CYCLE_SEC = 600
+MOON_EVENT_CHANCES = {
+    { Name = "Rainbow Moon", Chance = 6 },
+    { Name = "Gold Moon", Chance = 13 },
+    { Name = "Bloodmoon", Chance = 2 },
+    { Name = "Mega Moon", Chance = 1 },
+    { Name = "Moon", Chance = 78 },
+}
 genv.ftgs_AntiHit = false
 genv.ftgs_AntiStealGuard = false
 genv.ftgs_AutoHop = false
@@ -981,6 +994,7 @@ function loadConfig()
     if type(data.translateLanguage) == "string" then translateLanguage = data.translateLanguage end
     if type(data.selectedBgTheme) == "string" then selectedBgTheme = data.selectedBgTheme end
     visualMoneyAmount = tonumber(data.visualMoneyAmount) or visualMoneyAmount
+    if visualMoneyAmount == 0 then visualMoneyAmount = nil end
     if type(data.privateServerCode) == "string" then privateServerCode = data.privateServerCode end
     if type(data.selectedStealFruits) == "table" then
         table.clear(selectedStealFruits)
@@ -1193,22 +1207,44 @@ function isFruitFavorited(entry)
         or entry.Starred == true or entry.IsFavorited == true or entry.isFavorite == true
 end
 
+function scanNetFavoriteRemotes()
+    local found = {}
+    local function walk(node, path)
+        if type(node) ~= "table" then return end
+        for k, v in node do
+            local p = path .. "." .. tostring(k)
+            if type(k) == "string" and string.find(string.lower(k), "fav", 1, true) then
+                if type(v) == "table" and (type(v.Fire) == "function" or type(v.FireServer) == "function" or type(v.InvokeServer) == "function") then
+                    found[#found + 1] = { remote = v, path = p }
+                end
+            end
+            if type(v) == "table" and type(v.Fire) ~= "function" and type(v.FireServer) ~= "function" then
+                walk(v, p)
+            end
+        end
+    end
+    if Net then walk(Net, "Net") end
+    return found
+end
+
 function fireFavoriteRemote(remote, fruitId, wantFavorite)
     if not remote or fruitId == nil then return false end
     local idStr = tostring(fruitId)
     local tries = {
+        function() return safeNetCall(remote, "HarvestedFruits", fruitId, wantFavorite) end,
+        function() return safeNetCall(remote, "HarvestedFruits", idStr, wantFavorite) end,
+        function() return safeNetCall(remote, fruitId, "HarvestedFruits", wantFavorite) end,
+        function() return safeNetCall(remote, fruitId, wantFavorite) end,
+        function() return safeNetCall(remote, idStr, wantFavorite) end,
+        function() return safeNetCall(remote, wantFavorite, fruitId) end,
         function() return safeNetCall(remote, "HarvestedFruits", fruitId) end,
-        function() return safeNetCall(remote, fruitId, "HarvestedFruits") end,
-        function() return safeNetCall(remote, "HarvestedFruits", idStr) end,
         function() return safeNetCall(remote, fruitId) end,
         function() return safeNetCall(remote, idStr) end,
-        function() return safeNetCall(remote, "HarvestedFruits", fruitId, wantFavorite) end,
-        function() return safeNetCall(remote, fruitId, wantFavorite) end,
-        function() return safeNetCall(remote, wantFavorite, fruitId) end,
         function() return safeNetCall(remote, "HarvestedFruits", fruitId, wantFavorite and true or false) end,
         function() return safeNetCall(remote, { Category = "HarvestedFruits", ItemKey = fruitId, Favorite = wantFavorite }) end,
         function() return safeNetCall(remote, { Category = "HarvestedFruits", Id = fruitId, Favorite = wantFavorite }) end,
         function() return safeNetCall(remote, "HarvestedFruits", { Id = fruitId, Favorite = wantFavorite }) end,
+        function() return safeNetCall(remote, { ItemType = "HarvestedFruits", Id = fruitId, State = wantFavorite }) end,
     }
     for _, fn in tries do
         if fn() then return true end
@@ -1219,20 +1255,30 @@ end
 function setFruitFavoriteById(fruitId, entry, wantFavorite)
     initFavoriteRemotes()
     if fruitId == nil then return false end
-    if isFruitFavorited(entry) == wantFavorite then return false end
-    if favoriteRemote then
-        if fireFavoriteRemote(favoriteRemote, fruitId, wantFavorite) then return true end
-    end
-    if Net and Net.Inventory then
-        for k, remote in Net.Inventory do
-            if type(k) == "string" and string.find(string.lower(k), "fav", 1, true) and type(remote) == "table" then
-                if fireFavoriteRemote(remote, fruitId, wantFavorite) then
-                    favoriteRemote = remote
-                    favoriteRemotePath = "Inventory." .. k
-                    return true
-                end
+    if entry and isFruitFavorited(entry) == wantFavorite then return false end
+    for _, info in scanNetFavoriteRemotes() do
+        if fireFavoriteRemote(info.remote, fruitId, wantFavorite) then
+            favoriteRemote = info.remote
+            favoriteRemotePath = info.path
+            if type(entry) == "table" then
+                entry.Favorite = wantFavorite
+                entry.IsFavorite = wantFavorite
+                entry.Favorited = wantFavorite
             end
+            return true
         end
+    end
+    if favoriteRemote and fireFavoriteRemote(favoriteRemote, fruitId, wantFavorite) then
+        if type(entry) == "table" then
+            entry.Favorite = wantFavorite
+            entry.IsFavorite = wantFavorite
+        end
+        return true
+    end
+    if type(entry) == "table" then
+        entry.Favorite = wantFavorite
+        entry.IsFavorite = wantFavorite
+        entry.Favorited = wantFavorite
     end
     return false
 end
@@ -1279,6 +1325,48 @@ function tryUnfavoriteAllOnce()
             setFruitFavoriteById(getHarvestedFruitId(fruitId, entry), entry, false)
             return
         end
+    end
+end
+
+function handleToggleOff(key)
+    if key == "ftgs_AutoSteal" then cancelStealAction()
+    elseif key == "ftgs_FakeLag" then setFakeLag(false)
+    elseif key == "ftgs_FruitESP" then clearFruitEsp()
+    elseif key == "ftgs_Fullbright" then setFullbright(false)
+    elseif key == "ftgs_AutoBuyPet" or key == "ftgs_AutoDefendPet" then
+        isCatchingPet = false
+        activeDefendPetPos = nil
+        movementBypass = false
+        gardenActionLock = false
+        local hum = getHumanoid()
+        if hum then hum.PlatformStand = false end
+    elseif key == "ftgs_AutoCollectMutation" then collectingMutation = false
+    elseif key == "ftgs_AutoPlant" then plantingBusy = false
+    elseif key == "ftgs_AutoCollectDrops" then dropsBusy = false
+    elseif key == "ftgs_AutoShovel" then shovelBusy = false
+    elseif key == "ftgs_AutoSprinkler" then sprinklerBusy = false
+    elseif key == "ftgs_AutoWater" then wateringBusy = false
+    end
+end
+
+function sendAutoClick(count)
+    count = count or 8
+    local uis = Services.UserInputService
+    local vim = Services.VirtualInputManager
+    local pos = (uis and uis:GetMouseLocation()) or Vector2.new(420, 320)
+    for _ = 1, count do
+        if vim then
+            xpcall(function()
+                vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
+                task.wait()
+                vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
+            end, noopErr)
+        end
+        local vu = Services.VirtualUser
+        if vu and type(vu.ClickButton1) == "function" then
+            xpcall(function() vu:ClickButton1(pos) end, noopErr)
+        end
+        task.wait(autoClickSpeed)
     end
 end
 
@@ -1437,10 +1525,16 @@ function attackNearbyIntruders(petPos)
     local intruders = getPlayersNearPosition(petPos, PET_DEFEND_RADIUS)
     if #intruders == 0 then return false end
     local shovel = select(1, findShovelTool()) or select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
-    if not shovel then return false end
     for _, target in intruders do
+        local thrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if thrp then
+            tpInstant(thrp.Position + (thrp.CFrame.LookVector * -4))
+            task.wait(0.04)
+        end
+        if shovel then equipTool(shovel) end
+        sendAutoClick(14)
         hitPlayerWithShovel(target, shovel)
-        task.wait(0.04)
+        task.wait(0.03)
     end
     if isCatchingPet then stickToPosition(petPos) end
     return true
@@ -1906,12 +2000,45 @@ function getOccupiedPlantPositions()
     local positions = {}
     refreshOwnerPlot()
     local pf = OwnerPlot and OwnerPlot:FindFirstChild("Plants")
-    if not pf then return positions end
-    for _, plant in pf:GetChildren() do
-        local part = plant.PrimaryPart or plant:FindFirstChildWhichIsA("BasePart", true)
-        if part then positions[#positions + 1] = part.Position end
+    if pf then
+        for _, plant in pf:GetChildren() do
+            local part = plant.PrimaryPart or plant:FindFirstChildWhichIsA("BasePart", true)
+            if part then positions[#positions + 1] = part.Position end
+        end
+    end
+    for _, pd in pairs(trackedPlants) do
+        local pos = extractPlantDataPosition(pd)
+        if pos then positions[#positions + 1] = pos end
     end
     return positions
+end
+
+function scanGardenForEmptySpot()
+    refreshOwnerPlot()
+    if not OwnerPlot then return nil end
+    cachePlantPositions(OwnerPlot)
+    refreshPlantAreas()
+    if #plantAreas == 0 then return nil end
+    local occupied = getOccupiedPlantPositions()
+    local best, bestScore
+    for _, pos in plantAreas do
+        if not isPosInsidePlot(pos, 2) then continue end
+        if not isSpotEmpty(pos, occupied) then continue end
+        local edge = savedPlotCenter and flatDistXZ(pos, savedPlotCenter) or 0
+        if not best or edge > bestScore then best, bestScore = pos, edge end
+    end
+    return best
+end
+
+function findNearestEmptySpotOnPlot()
+    return scanGardenForEmptySpot()
+end
+
+function findEmptyGardenSpotNearPlayer()
+    refreshOwnerPlot()
+    if #plantAreas == 0 then refreshPlantAreas() end
+    if not isInGardenActionRange() then return nil end
+    return scanGardenForEmptySpot()
 end
 
 function isSpotEmpty(pos, occupied)
@@ -1936,31 +2063,6 @@ function isNearPlotCenter(pos)
     refreshOwnerPlot()
     if not savedPlotCenter or not pos then return false end
     return flatDistXZ(pos, savedPlotCenter) < PLANT_CENTER_AVOID
-end
-
-function findNearestEmptySpotOnPlot()
-    refreshOwnerPlot()
-    if #plantAreas == 0 then refreshPlantAreas() end
-    if #plantAreas == 0 then return nil end
-    local occupied = getOccupiedPlantPositions()
-    local best, bestEdge
-    for _, pos in plantAreas do
-        if not isPosInsidePlot(pos, 1.5) then continue end
-        if not isSpotEmpty(pos, occupied) then continue end
-        if isNearPlotCenter(pos) then continue end
-        local edge = savedPlotCenter and flatDistXZ(pos, savedPlotCenter) or 0
-        if not best or edge > bestEdge then
-            best, bestEdge = pos, edge
-        end
-    end
-    return best
-end
-
-function findEmptyGardenSpotNearPlayer()
-    refreshOwnerPlot()
-    if #plantAreas == 0 then refreshPlantAreas() end
-    if not isInGardenActionRange() then return nil end
-    return findNearestEmptySpotOnPlot()
 end
 
 function extractPlantDataPosition(plantData)
@@ -2064,6 +2166,74 @@ function isDataReady(data)
     return maxAge <= 0 or age >= maxAge
 end
 
+function isPhysicalFruitRipe(fruit, plant)
+    if not fruit then return false end
+    local maxAge = fruit:GetAttribute("MaxAge") or (plant and plant:GetAttribute("MaxAge"))
+    local age = fruit:GetAttribute("Age") or fruit:GetAttribute("SizeMulti")
+    if type(maxAge) == "number" and maxAge > 0 and type(age) == "number" then
+        return age >= maxAge
+    end
+    local prompt = fruit:FindFirstChildWhichIsA("ProximityPrompt", true)
+    return prompt ~= nil and getStealPrompt(fruit) == nil
+end
+
+function findBestHarvestableInGarden()
+    refreshOwnerPlot()
+    local best
+    local pf = OwnerPlot and OwnerPlot:FindFirstChild("Plants")
+    if pf then
+        for _, plant in pf:GetChildren() do
+            local fruits = plant:FindFirstChild("Fruits")
+            local scan = fruits and fruits:GetChildren() or { plant }
+            for _, fr in scan do
+                if isPhysicalFruitRipe(fr, plant) then
+                    local val = calculateStealValue(fr)
+                    if not best or val > best.value then
+                        best = {
+                            fruit = fr,
+                            plantId = plant:GetAttribute("PlantId") or plant:GetAttribute("PlantID") or plant.Name,
+                            fruitId = fr:GetAttribute("FruitId") or fr:GetAttribute("FruitID") or fr.Name,
+                            value = val,
+                        }
+                    end
+                end
+            end
+        end
+    end
+    for plantId, plantData in pairs(trackedPlants) do
+        if type(plantData) ~= "table" then continue end
+        local fruits = plantData.Fruits
+        if type(fruits) == "table" then
+            for fruitId, fruitData in pairs(fruits) do
+                if isDataReady(fruitData) then
+                    local val = 0
+                    local ok, v = xpcall(FruitValueCalc, noopErr, getPlantSeedName(fruitData), fruitData.SizeMulti or fruitData.Age, fruitData.Mutation, LocalPlayer, 1)
+                    if ok then val = v or 0 end
+                    if not best or val > best.value then
+                        best = { plantId = plantId, fruitId = fruitId, value = val, replica = true }
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+function tryHarvestBestOnce()
+    if not genv.ftgs_AutoHarvestBest then return end
+    local best = findBestHarvestableInGarden()
+    if not best then return end
+    if best.replica then
+        safeNetCall(Net.Garden and Net.Garden.CollectFruit, best.plantId, best.fruitId)
+        return
+    end
+    local part = best.fruit.PrimaryPart or best.fruit:FindFirstChildWhichIsA("BasePart", true)
+    if part then briefTpForAction(part.Position) end
+    safeNetCall(Net.Garden and Net.Garden.CollectFruit, best.plantId, best.fruitId)
+    local prompt = best.fruit:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then fireProximityPrompt(prompt) end
+end
+
 function tryHarvestOne()
     if not genv.ftgs_AutoHarvest then return end
     local n = 0
@@ -2146,21 +2316,20 @@ function tryAutoPlant()
     if not OwnerPlot then return end
     local seedName, tool = pickNextPlantSeed()
     if not tool then return end
-    local pos = findNearestEmptySpotOnPlot()
+    local pos = scanGardenForEmptySpot()
     if not pos or not isPosInsidePlot(pos, 1) then return end
     lastPlant = os.clock()
     plantingBusy = true
     task.spawn(function()
+        if not genv.ftgs_AutoPlant then plantingBusy = false return end
         movementBypass = true
-        if not isNearPlotForActions() then
-            if not briefTpForAction(pos) then plantingBusy = false movementBypass = false return end
-            task.wait(0.06)
-        end
+        briefTpForAction(pos)
+        task.wait(0.1)
         equipTool(tool)
         tool = findSeedToolByName(seedName) or tool
         safeNetCall(Net.Plant and Net.Plant.PlantSeed, pos, seedName, tool)
         if tool and type(tool.Activate) == "function" then xpcall(function() tool:Activate() end, noopErr) end
-        task.wait(0.04)
+        task.wait(0.05)
         movementBypass = false
         plantingBusy = false
     end)
@@ -2422,7 +2591,10 @@ end
 function isPlotStealable(plot)
     if not plot then return false end
     local owner, uid = getPlotStealOwner(plot)
-    return owner == nil and uid == 0
+    if owner == LocalPlayer then return false end
+    if owner == nil and uid == 0 then return true end
+    if owner and plotUnlocked(owner) then return true end
+    return false
 end
 
 function collectAllStealTargets()
@@ -2432,17 +2604,21 @@ function collectAllStealTargets()
         if not isPlotStealable(plot) then continue end
         local best = getBestStealableFruitOnPlot(plot)
         if best then
+            local owner, uid = getPlotStealOwner(plot)
             targets[#targets + 1] = {
                 fruit = best.fruit,
                 plot = plot,
-                owner = nil,
-                ownerUserId = 0,
-                unowned = true,
+                owner = owner,
+                ownerUserId = uid,
+                unowned = owner == nil and uid == 0,
                 value = best.value,
             }
         end
     end
-    table.sort(targets, function(a, b) return a.value > b.value end)
+    table.sort(targets, function(a, b)
+        if a.unowned ~= b.unowned then return a.unowned end
+        return a.value > b.value
+    end)
     return targets
 end
 
@@ -2510,12 +2686,13 @@ function stealFruit(fruit, ownerUserId, sessionId)
     local stealPos, uid, plantId, fruitId = resolveStealTarget(fruit, ownerUserId)
     if not stealPos or not plantId then return false end
     if uid == nil then
-        uid = tonumber(fruit:GetAttribute("UserId")) or tonumber(fruit:GetAttribute("OwnerUserId")) or 0
+        uid = tonumber(fruit:GetAttribute("UserId")) or tonumber(fruit:GetAttribute("OwnerUserId")) or ownerUserId or 0
     end
 
     local fruitCountBefore = getFruitCount()
     movementBypass = true
     gardenActionLock = true
+    slowFlyTo(stealPos)
     local deadline = os.clock() + STEAL_HOLD_TIMEOUT
 
     while os.clock() < deadline do
@@ -2556,7 +2733,10 @@ function tryAutoSteal()
         for _, t in ipairs(targets) do
             if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then break end
             if stolen >= STEAL_BATCH or isInventoryFull() then break end
-            if stealFruit(t.fruit, t.ownerUserId or 0, sessionId) then stolen += 1 end
+            if t.owner and not plotUnlocked(t.owner) then continue end
+            local uid = t.ownerUserId
+            if t.owner then uid = t.owner.UserId end
+            if stealFruit(t.fruit, uid, sessionId) then stolen += 1 end
             if stolen >= STEAL_BATCH then break end
             task.wait(0.03)
         end
@@ -2642,6 +2822,7 @@ function tryBuyPet()
                 stickToPosition(pos)
                 if shouldDefendPetAt(pos) then
                     attackNearbyIntruders(pos)
+                    sendAutoClick(8)
                     task.wait(0.02)
                 end
             end
@@ -2906,7 +3087,14 @@ function applyGodMode(char)
 end
 
 function applyVisualMoney()
-    if visualMoneyAmount == nil then return end
+    if visualMoneyAmount == nil or visualMoneyAmount == 0 then
+        local real = PlayerReplica and PlayerReplica.Data and PlayerReplica.Data.Sheckles
+        if real == nil then return end
+        local ls = LocalPlayer:FindFirstChild("leaderstats")
+        local s = ls and ls:FindFirstChild("Sheckles")
+        if s then s.Value = real end
+        return
+    end
     local ls = LocalPlayer:FindFirstChild("leaderstats")
     local s = ls and ls:FindFirstChild("Sheckles")
     if s then s.Value = visualMoneyAmount end
@@ -3353,13 +3541,11 @@ function setFakeLag(on, delay)
         fakeLagPendingCF = hrp.CFrame
         if fakeLagReplicatedCF then
             hrp.CFrame = fakeLagReplicatedCF
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
         else
             fakeLagReplicatedCF = hrp.CFrame
         end
     end)
-    fakeLagPreConn = Services.RunService.PreRender:Connect(function()
+    fakeLagPreConn = Services.RunService.RenderStepped:Connect(function()
         if not genv.ftgs_FakeLag or movementBypass or gardenActionLock or stealBusy or isCatchingPet then return end
         local hrp = getRoot()
         if hrp and fakeLagPendingCF then hrp.CFrame = fakeLagPendingCF end
@@ -4015,11 +4201,121 @@ function hexColor(hex)
     return Color3.fromRGB(tonumber(hex:sub(1, 2), 16) or 255, tonumber(hex:sub(3, 4), 16) or 255, tonumber(hex:sub(5, 6), 16) or 255)
 end
 
+function getMoonTypeForCycle(cycleID, order)
+    local rng = Random.new(cycleID * 1000 + (order or 3))
+    local roll = rng:NextNumber() * 100
+    local sum = 0
+    for _, moon in MOON_EVENT_CHANCES do
+        sum += moon.Chance
+        if roll <= sum then return moon.Name end
+    end
+    return "Moon"
+end
+
+function formatEtaShort(sec)
+    sec = math.max(0, math.floor(sec + 0.5))
+    local h = math.floor(sec / 3600)
+    local m = math.floor((sec % 3600) / 60)
+    local s = sec % 60
+    if h > 0 then return string.format("%dh %dm %ds", h, m, s) end
+    return string.format("%dm %ds", m, s)
+end
+
+function getNextSpecialMoonEvents(limit)
+    limit = limit or 4
+    local now = os.time()
+    local wanted = { ["Gold Moon"] = true, ["Rainbow Moon"] = true, Bloodmoon = true, ["Mega Moon"] = true }
+    local found, seen = {}, {}
+    for t = now, now + 86400, MOON_CYCLE_SEC do
+        local cycleID = math.floor(t / MOON_CYCLE_SEC)
+        local moonType = getMoonTypeForCycle(cycleID, 3)
+        if wanted[moonType] and not seen[moonType] then
+            seen[moonType] = true
+            found[#found + 1] = { name = moonType, eta = math.max(0, t - now) }
+        end
+        if #found >= limit then break end
+    end
+    table.sort(found, function(a, b) return a.eta < b.eta end)
+    return found
+end
+
+function setupMoonPredictionWidget()
+    if moonPredictGui and moonPredictGui.Parent then moonPredictGui:Destroy() end
+    local pg = LocalPlayer:WaitForChild("PlayerGui")
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "NTMT_MoonPredict"
+    sg.ResetOnSpawn = false
+    sg.IgnoreGuiInset = true
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.Parent = pg
+    moonPredictGui = sg
+    local frame = Instance.new("Frame")
+    frame.Name = "Panel"
+    frame.AnchorPoint = Vector2.new(1, 1)
+    frame.Position = UDim2.new(1, -12, 1, -110)
+    frame.Size = UDim2.fromOffset(250, 150)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+    frame.BackgroundTransparency = 0.15
+    frame.BorderSizePixel = 0
+    frame.Parent = sg
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = frame
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, -10, 0, 22)
+    title.Position = UDim2.fromOffset(8, 4)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 13
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.TextColor3 = Color3.fromRGB(255, 220, 120)
+    title.Text = "Coming Soon"
+    title.Parent = frame
+    local list = Instance.new("Frame")
+    list.Name = "List"
+    list.BackgroundTransparency = 1
+    list.Position = UDim2.fromOffset(8, 28)
+    list.Size = UDim2.new(1, -16, 1, -32)
+    list.Parent = frame
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 4)
+    layout.Parent = list
+    local rows = {}
+    for i = 1, 4 do
+        local row = Instance.new("TextLabel")
+        row.BackgroundTransparency = 1
+        row.Size = UDim2.new(1, 0, 0, 24)
+        row.Font = Enum.Font.Gotham
+        row.TextSize = 12
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.TextColor3 = Color3.fromRGB(230, 230, 230)
+        row.Text = "..."
+        row.Parent = list
+        rows[i] = row
+    end
+    task.spawn(function()
+        while moonPredictGui and moonPredictGui.Parent do
+            local events = getNextSpecialMoonEvents(4)
+            for i = 1, 4 do
+                local ev = events[i]
+                if ev then
+                    rows[i].Text = string.format("%s  %s", ev.name, formatEtaShort(ev.eta))
+                else
+                    rows[i].Text = "—"
+                end
+            end
+            task.wait(1)
+        end
+    end)
+end
+
 function applyUITheme(name)
     selectedUITheme = name or selectedUITheme or "Black"
+    genv.ftgs_uiTheme = selectedUITheme
     local c = UI_THEMES[selectedUITheme] or UI_THEMES.Black
     local themeName = "NTMT_" .. selectedUITheme
-    local fallback = ({ Black = "Dark", Pink = "Rose", Purple = "Violet", Blue = "Sky", Green = "Plant", Yellow = "Amber" })[selectedUITheme] or "Dark"
+    local fallbackMap = { Black = "Dark", Pink = "Rose", Purple = "Violet", Blue = "Sky", Green = "Plant", Yellow = "Amber", Red = "Red", White = "Light", Gray = "Dark", Brown = "Dark" }
+    local fallback = fallbackMap[selectedUITheme] or "Dark"
     if type(WindUI.AddTheme) == "function" then
         xpcall(function()
             WindUI:AddTheme({
@@ -4037,11 +4333,20 @@ function applyUITheme(name)
             })
         end, noopErr)
     end
-    if type(WindUI.SetTheme) == "function" then
-        local applied = false
-        xpcall(function() WindUI:SetTheme(themeName) applied = true end, noopErr)
-        if not applied then xpcall(function() WindUI:SetTheme(fallback) end, noopErr) end
+    local applied = false
+    if Window and type(Window.SetTheme) == "function" then
+        xpcall(function() Window:SetTheme(themeName) applied = true end, noopErr)
     end
+    if not applied and type(WindUI.SetTheme) == "function" then
+        xpcall(function() WindUI:SetTheme(themeName) applied = true end, noopErr)
+    end
+    if not applied and type(WindUI.SetTheme) == "function" then
+        xpcall(function() WindUI:SetTheme(fallback) end, noopErr)
+    end
+    task.defer(function()
+        markHubScreenGuis()
+        if selectedBgTheme and selectedBgTheme ~= "None" then applyHubBackgroundImage(selectedBgTheme) end
+    end)
     saveConfig()
 end
 
@@ -4057,17 +4362,23 @@ Window = WindUI:CreateWindow({
 })
 markHubScreenGuis()
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.8", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v6.9", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
 task.defer(function()
     task.wait(0.8)
     markHubScreenGuis()
+    clearFruitEsp()
+    setupMoonPredictionWidget()
     if selectedBgTheme and selectedBgTheme ~= "None" then applyHubBackgroundImage(selectedBgTheme) end
 end)
 
 function makeToggle(tab, title, desc, key)
-    tab:Toggle({ Title = title, Desc = desc, Default = genv[key] or false, Callback = function(s) genv[key] = s end })
+    tab:Toggle({ Title = title, Desc = desc, Default = genv[key] or false, Callback = function(s)
+        genv[key] = s
+        saveConfig()
+        if not s then handleToggleOff(key) end
+    end })
 end
 
 function multiDropdown(tab, title, values, selected, allowNone)
@@ -4083,6 +4394,7 @@ end
 MainTab = Window:Tab({ Title = "Main", Icon = "home" })
 MainTab:Section({ Title = "Farm" })
 makeToggle(MainTab, "Auto Harvest", "Collect ripe fruit (filters below)", "ftgs_AutoHarvest")
+makeToggle(MainTab, "Auto Harvest Best", "Harvest highest value fruit in your garden", "ftgs_AutoHarvestBest")
 MainTab:Input({ Title = "Harvest max weight (kg)", Value = tostring(harvestMaxWeight), Placeholder = "0 = off, 100 = under 100kg only", Callback = function(v)
     harvestMaxWeight = math.max(0, tonumber(v) or 0)
 end })
@@ -4094,6 +4406,7 @@ MainTab:Section({ Title = "Favorite Fruits" })
 MainTab:Dropdown({ Title = "Select Fruit", Values = SeedNames, Value = selectedFavoriteFruit, Callback = function(v)
     if type(v) == "table" then v = v[1] end
     selectedFavoriteFruit = v or selectedFavoriteFruit
+    saveConfig()
 end })
 makeToggle(MainTab, "Auto Favorite Fruit", "0.01s per fruit (selected)", "ftgs_AutoFavoriteSelect")
 makeToggle(MainTab, "Auto Unfavorite Fruit", "0.01s per fruit (selected)", "ftgs_AutoUnfavoriteSelect")
@@ -4128,8 +4441,9 @@ MainTab:Input({ Title = "Mail message", Value = mailMessage, Placeholder = "mess
 end })
 
 AutoTab = Window:Tab({ Title = "Automation", Icon = "bot" })
-AutoTab:Toggle({ Title = "Auto Steal", Desc = "Unowned plots only — best fruit per plot", Default = genv.ftgs_AutoSteal or false, Callback = function(s)
+AutoTab:Toggle({ Title = "Auto Steal", Desc = "TP + steal best fruit per plot (filter below)", Default = genv.ftgs_AutoSteal or false, Callback = function(s)
     genv.ftgs_AutoSteal = s
+    saveConfig()
     if not s then cancelStealAction() end
 end })
 AutoTab:Dropdown({ Title = "Select Steal Fruits", Values = SeedNames, Multi = true, AllowNone = true, Callback = function(sel)
@@ -4229,14 +4543,22 @@ SettingsTab:Toggle({ Title = "Anti Hit", Desc = "Dampen shovel knockback (BodyVe
 end })
 SettingsTab:Section({ Title = "Visual" })
 SettingsTab:Toggle({ Title = "Fullbright", Desc = "Night looks like day", Default = genv.ftgs_Fullbright or false, Callback = function(s) setFullbright(s) end })
-SettingsTab:Toggle({ Title = "Fruit ESP", Desc = "Top 10 highest value fruits (all gardens)", Default = genv.ftgs_FruitESP ~= false, Callback = function(s) genv.ftgs_FruitESP = s if not s then clearFruitEsp() end end })
+SettingsTab:Toggle({ Title = "Fruit ESP", Desc = "Top 10 highest value fruits (all gardens)", Default = genv.ftgs_FruitESP == true, Callback = function(s)
+    genv.ftgs_FruitESP = s
+    saveConfig()
+    if not s then clearFruitEsp() end
+end })
 SettingsTab:Section({ Title = "Beta" })
 makeToggle(SettingsTab, "God Mode (beta)", "MaxHealth 999999999", "ftgs_GodMode")
 makeToggle(SettingsTab, "Dupe Visual (beta)", "Hold pet/seed then click Dupe", "ftgs_VisualDupe")
 SettingsTab:Button({ Title = "Dupe Held Item", Icon = "copy", Callback = function() visualDupeHeldItem() end })
-SettingsTab:Input({ Title = "Visual Money", Value = visualMoneyAmount and tostring(visualMoneyAmount) or "", Placeholder = "9999999 = show 9m", Callback = function(v)
-    local n = tonumber(v)
-    visualMoneyAmount = n
+SettingsTab:Input({ Title = "Visual Money", Value = (visualMoneyAmount and visualMoneyAmount > 0) and tostring(visualMoneyAmount) or "", Placeholder = "9999999 = show 9m | 0 = real money", Callback = function(v)
+    if v == nil or v == "" then
+        visualMoneyAmount = nil
+    else
+        local n = tonumber(v)
+        visualMoneyAmount = (n and n > 0) and n or nil
+    end
     applyVisualMoney()
     saveConfig()
 end })
@@ -4265,11 +4587,11 @@ for themeName in { "Doraemon", "Shinnosuke", "Spiderman", "Lunar", "Spongebob", 
     end })
 end
 SettingsTab:Section({ Title = "Fake Lag" })
-SettingsTab:Input({ Title = "Fake Lag delay (sec)", Value = tostring(fakeLagDelay), Placeholder = "0.3 = hyper, 2 = slowmo", Callback = function(v)
-    fakeLagDelay = math.max(0.05, tonumber(v) or fakeLagDelay)
+SettingsTab:Input({ Title = "Fake Lag delay (sec)", Value = "", Placeholder = "default 0.3 | 2 = slowmo for others", Callback = function(v)
+    if v and v ~= "" then fakeLagDelay = math.max(0.05, tonumber(v) or fakeLagDelay) end
     saveConfig()
 end })
-SettingsTab:Toggle({ Title = "Fake Lag", Desc = "Others see your position delayed (local moves normal)", Default = genv.ftgs_FakeLag or false, Callback = function(s)
+SettingsTab:Toggle({ Title = "Fake Lag", Desc = "You move normal — others see delayed position", Default = genv.ftgs_FakeLag or false, Callback = function(s)
     setFakeLag(s, fakeLagDelay)
 end })
 
@@ -4293,6 +4615,10 @@ end
 
 task.spawn(function()
     while true do if genv.ftgs_AutoHarvest then safeLoop(tryHarvestOne) end task.wait(COOLDOWN.Harvest) end
+end)
+
+task.spawn(function()
+    while true do if genv.ftgs_AutoHarvestBest then safeLoop(tryHarvestBestOnce) end task.wait(COOLDOWN.Harvest) end
 end)
 
 task.spawn(function()
@@ -4487,7 +4813,7 @@ task.spawn(function()
     end
 end)
 
-print("[NTMT HUB v6.8] Loaded | " .. Executor)
+print("[NTMT HUB v6.9] Loaded | " .. Executor)
 
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
