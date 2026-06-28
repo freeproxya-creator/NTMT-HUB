@@ -4406,17 +4406,43 @@ end
 
 function buildWebhookEmbed()
     local weather, remain = getWeatherInfo()
+    local totalSec = totalPlaySeconds + (os.time() - sessionStart)
+    local discordShort = string.gsub(DISCORD_LINK, "^https?://", "")
+    local boughtSeeds = buildBoughtCountLines(BoughtSeeds)
+    local boughtGears = buildBoughtCountLines(BoughtGears)
+
     local desc = table.concat({
-        "** weather ** | " .. formatPlayTimeCompact(remain),
-        weather,
+        "** NTMT HUB INFO **",
+        "NTMT HUB | " .. LocalPlayer.Name,
         "",
-        "Mutations: " .. buildMutationsLine(),
+        "** WEATHER **",
+        weather .. " | end in " .. formatEtaLong(remain),
+        "",
+        "** SEED AND GEAR BOUGHT **",
+        boughtSeeds,
+        boughtGears,
+        "",
+        "** INVENTORY **",
+        "- seeds",
+        buildInventorySeedLines(),
+        "",
+        "----------------------------------",
+        "- gears",
+        buildInventoryGearLines(),
+        "",
+        "----------------------------------",
+        "- pets",
+        buildInventoryPetLines(),
+        "",
+        "=============================",
+        "** sheckles: ** " .. formatCompactNumber(getSheckles()),
+        "** total time use script: ** " .. formatDuration(totalSec),
     }, "\n")
+
     return {
-        title = "NTMT HUB | " .. LocalPlayer.Name,
         description = desc,
         color = 0x30FF6A,
-        footer = { text = "made by NTMT HUB | " .. string.gsub(DISCORD_LINK, "^https?://", "") },
+        footer = { text = "made by NTMT HUB | " .. discordShort .. "•" },
         timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     }
 end
