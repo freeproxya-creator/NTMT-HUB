@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v1 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v1")
+--[[ NTMT HUB - Grow a Garden 2 v6.9 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v6.9")
 
 pcall(function()
     if delfile and isfile then
@@ -365,6 +365,7 @@ local function createBuiltinWindUI()
             box.Parent = scroll
             corner(box, 6)
             box.FocusLost:Connect(function() if cfg.Callback then cfg.Callback(box.Text) end end)
+            return box
         end
 
         function tabObj:Dropdown(cfg)
@@ -832,7 +833,7 @@ genv.ftgs_Fullbright = false
 genv.ftgs_FruitESP = false
 genv.ftgs_AutoHarvestBest = false
 autoClickSpeed = 0.04
-hubKeyUnlocked, hubTabsBuilt, hubKeyDraft = false, false, ""
+hubKeyUnlocked, hubTabsBuilt, hubKeyDraft, hubKeyInputEl = false, false, "", nil
 weatherPredictPara, weatherLivePara = nil, nil
 FAVORITE_TICK = 0.01
 visualMoneyBackup = nil
@@ -5496,11 +5497,29 @@ function copyDiscordForKey()
     hubNotify("Get Key", "Discord link copied — join and grab your free key!")
 end
 
+function getHubKeyInputText()
+    local el = hubKeyInputEl
+    if el then
+        if type(el.GetValue) == "function" then
+            local ok, val = pcall(function() return el:GetValue() end)
+            if ok and type(val) == "string" and val ~= "" then return val end
+        end
+        if type(el.Get) == "function" then
+            local ok, val = pcall(function() return el:Get() end)
+            if ok and type(val) == "string" and val ~= "" then return val end
+        end
+        if type(el.Value) == "string" and el.Value ~= "" then return el.Value end
+        if typeof(el) == "Instance" and el:IsA("TextBox") then return el.Text end
+    end
+    return hubKeyDraft
+end
+
 function tryUnlockHubKey(key)
     if hubKeyUnlocked then
         hubNotify("Key", "Already unlocked!")
         return true
     end
+    key = key or getHubKeyInputText()
     if not verifyHubKey(key) then
         hubNotify("Key", "Invalid key — use Get Key and join Discord")
         return false
@@ -5775,7 +5794,7 @@ KeyTab:Paragraph({
     Title = "License Key",
     Desc = "Get your free key from Discord → paste below → Check Key.",
 })
-KeyTab:Input({
+hubKeyInputEl = KeyTab:Input({
     Title = "Enter Key",
     Value = "",
     Placeholder = "paste key from Discord",
@@ -5784,7 +5803,7 @@ KeyTab:Input({
 KeyTab:Button({
     Title = "Check Key (1 click)",
     Icon = "key",
-    Callback = function() tryUnlockHubKey(hubKeyDraft) end,
+    Callback = function() tryUnlockHubKey(getHubKeyInputText()) end,
 })
 KeyTab:Button({
     Title = "Get Key (1 click)",
