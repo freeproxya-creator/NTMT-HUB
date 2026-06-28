@@ -656,6 +656,9 @@ Services = {
     RunService = cloneref(game:GetService("RunService")),
     Lighting = cloneref(game:GetService("Lighting")),
     MaterialService = cloneref(game:GetService("MaterialService")),
+    LogService = cloneref(game:GetService("LogService")),
+    ScriptContext = cloneref(game:GetService("ScriptContext")),
+    Debris = cloneref(game:GetService("Debris")),
 }
 
 LocalPlayer = Services.Players.LocalPlayer or Services.Players.PlayerAdded:Wait()
@@ -4818,7 +4821,10 @@ end
 
 function fixLagDisconnectNonForeign(service, eventName)
     if type(getconnections) ~= "function" then return end
-    local ok, connections = pcall(getconnections, service[eventName])
+    if not service or type(eventName) ~= "string" then return end
+    local signal = service[eventName]
+    if not signal then return end
+    local ok, connections = pcall(getconnections, signal)
     if not ok or type(connections) ~= "table" then return end
     for _, c in ipairs(connections) do
         if c and not c.ForeignState then
@@ -4829,7 +4835,10 @@ end
 
 function fixLagPruneConnections(service, eventName)
     if type(getconnections) ~= "function" then return end
-    local ok, connections = pcall(getconnections, service[eventName])
+    if not service or type(eventName) ~= "string" then return end
+    local signal = service[eventName]
+    if not signal then return end
+    local ok, connections = pcall(getconnections, signal)
     if not ok or type(connections) ~= "table" or #connections <= FIX_LAG_MAX_CONNECTIONS then return end
     for i = #connections, FIX_LAG_MAX_CONNECTIONS + 1, -1 do
         local c = connections[i]
