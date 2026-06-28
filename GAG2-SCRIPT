@@ -830,13 +830,1024 @@ genv.ftgs_FruitESP = false
 genv.ftgs_AutoHarvestBest = false
 autoClickSpeed = 0.04
 moonPredictGui = nil
-MOON_CYCLE_SEC = 600
-MOON_EVENT_CHANCES = {
-    { Name = "Rainbow Moon", Chance = 6 },
-    { Name = "Gold Moon", Chance = 13 },
-    { Name = "Bloodmoon", Chance = 2 },
-    { Name = "Mega Moon", Chance = 1 },
-    { Name = "Moon", Chance = 78 },
+visualMoneyBackup = nil
+MOON_WEATHER_CLEN = 600
+MOON_WEATHER_START_CYCLE = 2970230
+MOON_WEATHER_PHASES = {
+    { offset = 0, name = "Day" },
+    { offset = 450, name = "Sunset" },
+    { offset = 480, name = "Night" },
+}
+MOON_WEATHER_SKIP = { Day = true, Sunset = true, Moon = true }
+MOON_WEATHER_SEQ = {
+  [1] = "Moon",
+  [2] = "Moon",
+  [3] = "Moon",
+  [4] = "Moon",
+  [5] = "Moon",
+  [6] = "Moon",
+  [7] = "Moon",
+  [8] = "Goldmoon",
+  [9] = "Moon",
+  [10] = "Moon",
+  [11] = "Moon",
+  [12] = "Moon",
+  [13] = "Moon",
+  [14] = "Bloodmoon",
+  [15] = "Moon",
+  [16] = "Goldmoon",
+  [17] = "Moon",
+  [18] = "Moon",
+  [19] = "Bloodmoon",
+  [20] = "Goldmoon",
+  [21] = "Moon",
+  [22] = "Moon",
+  [23] = "Moon",
+  [24] = "Goldmoon",
+  [25] = "Moon",
+  [26] = "Moon",
+  [27] = "Moon",
+  [28] = "Moon",
+  [29] = "Moon",
+  [30] = "Moon",
+  [31] = "Moon",
+  [32] = "Moon",
+  [33] = "Goldmoon",
+  [34] = "Moon",
+  [35] = "Moon",
+  [36] = "Moon",
+  [37] = "Moon",
+  [38] = "Moon",
+  [39] = "Moon",
+  [40] = "Goldmoon",
+  [41] = "Goldmoon",
+  [42] = "Moon",
+  [43] = "Moon",
+  [44] = "Moon",
+  [45] = "Goldmoon",
+  [46] = "Goldmoon",
+  [47] = "Goldmoon",
+  [48] = "Goldmoon",
+  [49] = "Moon",
+  [50] = "Moon",
+  [51] = "Bloodmoon",
+  [52] = "Moon",
+  [53] = "Moon",
+  [54] = "Moon",
+  [55] = "Moon",
+  [56] = "Moon",
+  [57] = "Moon",
+  [58] = "Moon",
+  [59] = "Goldmoon",
+  [60] = "Goldmoon",
+  [61] = "Moon",
+  [62] = "Moon",
+  [63] = "Moon",
+  [64] = "Moon",
+  [65] = "Moon",
+  [66] = "Moon",
+  [67] = "Moon",
+  [68] = "Moon",
+  [69] = "Moon",
+  [70] = "Moon",
+  [71] = "Moon",
+  [72] = "Moon",
+  [73] = "Moon",
+  [74] = "Moon",
+  [75] = "Moon",
+  [76] = "Moon",
+  [77] = "Goldmoon",
+  [78] = "Goldmoon",
+  [79] = "Goldmoon",
+  [80] = "Moon",
+  [81] = "Moon",
+  [82] = "Moon",
+  [83] = "Moon",
+  [84] = "Moon",
+  [85] = "Moon",
+  [86] = "Bloodmoon",
+  [87] = "Moon",
+  [88] = "Moon",
+  [89] = "Moon",
+  [90] = "Moon",
+  [91] = "Moon",
+  [92] = "Moon",
+  [93] = "Moon",
+  [94] = "Moon",
+  [95] = "Rainbow Moon",
+  [96] = "Moon",
+  [97] = "Moon",
+  [98] = "Moon",
+  [99] = "Moon",
+  [100] = "Moon",
+  [101] = "Goldmoon",
+  [102] = "Moon",
+  [103] = "Moon",
+  [104] = "Moon",
+  [105] = "Moon",
+  [106] = "Moon",
+  [107] = "Moon",
+  [108] = "Moon",
+  [109] = "Goldmoon",
+  [110] = "Moon",
+  [111] = "Moon",
+  [112] = "Moon",
+  [113] = "Rainbow Moon",
+  [114] = "Moon",
+  [115] = "Moon",
+  [116] = "Moon",
+  [117] = "Goldmoon",
+  [118] = "Moon",
+  [119] = "Moon",
+  [120] = "Moon",
+  [121] = "Goldmoon",
+  [122] = "Moon",
+  [123] = "Moon",
+  [124] = "Goldmoon",
+  [125] = "Rainbow Moon",
+  [126] = "Moon",
+  [127] = "Moon",
+  [128] = "Moon",
+  [129] = "Rainbow Moon",
+  [130] = "Moon",
+  [131] = "Moon",
+  [132] = "Moon",
+  [133] = "Moon",
+  [134] = "Moon",
+  [135] = "Moon",
+  [136] = "Moon",
+  [137] = "Goldmoon",
+  [138] = "Rainbow Moon",
+  [139] = "Moon",
+  [140] = "Moon",
+  [141] = "Moon",
+  [142] = "Goldmoon",
+  [143] = "Moon",
+  [144] = "Moon",
+  [145] = "Moon",
+  [146] = "Moon",
+  [147] = "Goldmoon",
+  [148] = "Moon",
+  [149] = "Moon",
+  [150] = "Moon",
+  [151] = "Moon",
+  [152] = "Moon",
+  [153] = "Moon",
+  [154] = "Moon",
+  [155] = "Moon",
+  [156] = "Moon",
+  [157] = "Moon",
+  [158] = "Moon",
+  [159] = "Moon",
+  [160] = "Goldmoon",
+  [161] = "Moon",
+  [162] = "Moon",
+  [163] = "Moon",
+  [164] = "Moon",
+  [165] = "Moon",
+  [166] = "Moon",
+  [167] = "Moon",
+  [168] = "Moon",
+  [169] = "Moon",
+  [170] = "Moon",
+  [171] = "Moon",
+  [172] = "Goldmoon",
+  [173] = "Moon",
+  [174] = "Moon",
+  [175] = "Moon",
+  [176] = "Moon",
+  [177] = "Moon",
+  [178] = "Moon",
+  [179] = "Moon",
+  [180] = "Moon",
+  [181] = "Goldmoon",
+  [182] = "Moon",
+  [183] = "Moon",
+  [184] = "Moon",
+  [185] = "Moon",
+  [186] = "Moon",
+  [187] = "Moon",
+  [188] = "Moon",
+  [189] = "Moon",
+  [190] = "Moon",
+  [191] = "Moon",
+  [192] = "Moon",
+  [193] = "Goldmoon",
+  [194] = "Moon",
+  [195] = "Moon",
+  [196] = "Moon",
+  [197] = "Moon",
+  [198] = "Goldmoon",
+  [199] = "Moon",
+  [200] = "Moon",
+  [201] = "Moon",
+  [202] = "Moon",
+  [203] = "Moon",
+  [204] = "Rainbow Moon",
+  [205] = "Goldmoon",
+  [206] = "Moon",
+  [207] = "Moon",
+  [208] = "Goldmoon",
+  [209] = "Moon",
+  [210] = "Rainbow Moon",
+  [211] = "Moon",
+  [212] = "Moon",
+  [213] = "Moon",
+  [214] = "Bloodmoon",
+  [215] = "Moon",
+  [216] = "Goldmoon",
+  [217] = "Moon",
+  [218] = "Moon",
+  [219] = "Moon",
+  [220] = "Moon",
+  [221] = "Moon",
+  [222] = "Goldmoon",
+  [223] = "Goldmoon",
+  [224] = "Rainbow Moon",
+  [225] = "Moon",
+  [226] = "Moon",
+  [227] = "Moon",
+  [228] = "Moon",
+  [229] = "Moon",
+  [230] = "Moon",
+  [231] = "Rainbow Moon",
+  [232] = "Moon",
+  [233] = "Moon",
+  [234] = "Moon",
+  [235] = "Moon",
+  [236] = "Moon",
+  [237] = "Moon",
+  [238] = "Moon",
+  [239] = "Moon",
+  [240] = "Moon",
+  [241] = "Moon",
+  [242] = "Goldmoon",
+  [243] = "Moon",
+  [244] = "Goldmoon",
+  [245] = "Moon",
+  [246] = "Rainbow Moon",
+  [247] = "Moon",
+  [248] = "Moon",
+  [249] = "Moon",
+  [250] = "Moon",
+  [251] = "Moon",
+  [252] = "Rainbow Moon",
+  [253] = "Moon",
+  [254] = "Moon",
+  [255] = "Moon",
+  [256] = "Moon",
+  [257] = "Moon",
+  [258] = "Moon",
+  [259] = "Moon",
+  [260] = "Moon",
+  [261] = "Moon",
+  [262] = "Moon",
+  [263] = "Moon",
+  [264] = "Moon",
+  [265] = "Moon",
+  [266] = "Moon",
+  [267] = "Moon",
+  [268] = "Moon",
+  [269] = "Goldmoon",
+  [270] = "Bloodmoon",
+  [271] = "Moon",
+  [272] = "Moon",
+  [273] = "Moon",
+  [274] = "Moon",
+  [275] = "Moon",
+  [276] = "Moon",
+  [277] = "Moon",
+  [278] = "Goldmoon",
+  [279] = "Moon",
+  [280] = "Moon",
+  [281] = "Rainbow Moon",
+  [282] = "Goldmoon",
+  [283] = "Goldmoon",
+  [284] = "Moon",
+  [285] = "Moon",
+  [286] = "Goldmoon",
+  [287] = "Moon",
+  [288] = "Moon",
+  [289] = "Bloodmoon",
+  [290] = "Moon",
+  [291] = "Moon",
+  [292] = "Moon",
+  [293] = "Goldmoon",
+  [294] = "Moon",
+  [295] = "Moon",
+  [296] = "Moon",
+  [297] = "Goldmoon",
+  [298] = "Moon",
+  [299] = "Bloodmoon",
+  [300] = "Goldmoon",
+  [301] = "Moon",
+  [302] = "Moon",
+  [303] = "Moon",
+  [304] = "Moon",
+  [305] = "Moon",
+  [306] = "Moon",
+  [307] = "Moon",
+  [308] = "Moon",
+  [309] = "Moon",
+  [310] = "Moon",
+  [311] = "Moon",
+  [312] = "Goldmoon",
+  [313] = "Moon",
+  [314] = "Moon",
+  [315] = "Rainbow Moon",
+  [316] = "Moon",
+  [317] = "Bloodmoon",
+  [318] = "Moon",
+  [319] = "Bloodmoon",
+  [320] = "Moon",
+  [321] = "Moon",
+  [322] = "Moon",
+  [323] = "Moon",
+  [324] = "Moon",
+  [325] = "Moon",
+  [326] = "Moon",
+  [327] = "Bloodmoon",
+  [328] = "Moon",
+  [329] = "Goldmoon",
+  [330] = "Moon",
+  [331] = "Bloodmoon",
+  [332] = "Goldmoon",
+  [333] = "Goldmoon",
+  [334] = "Bloodmoon",
+  [335] = "Moon",
+  [336] = "Goldmoon",
+  [337] = "Moon",
+  [338] = "Moon",
+  [339] = "Moon",
+  [340] = "Moon",
+  [341] = "Moon",
+  [342] = "Goldmoon",
+  [343] = "Moon",
+  [344] = "Moon",
+  [345] = "Goldmoon",
+  [346] = "Moon",
+  [347] = "Moon",
+  [348] = "Moon",
+  [349] = "Moon",
+  [350] = "Moon",
+  [351] = "Moon",
+  [352] = "Goldmoon",
+  [353] = "Moon",
+  [354] = "Moon",
+  [355] = "Moon",
+  [356] = "Goldmoon",
+  [357] = "Moon",
+  [358] = "Moon",
+  [359] = "Moon",
+  [360] = "Moon",
+  [361] = "Moon",
+  [362] = "Moon",
+  [363] = "Moon",
+  [364] = "Moon",
+  [365] = "Moon",
+  [366] = "Moon",
+  [367] = "Moon",
+  [368] = "Moon",
+  [369] = "Moon",
+  [370] = "Goldmoon",
+  [371] = "Moon",
+  [372] = "Moon",
+  [373] = "Moon",
+  [374] = "Moon",
+  [375] = "Moon",
+  [376] = "Moon",
+  [377] = "Goldmoon",
+  [378] = "Goldmoon",
+  [379] = "Goldmoon",
+  [380] = "Moon",
+  [381] = "Moon",
+  [382] = "Moon",
+  [383] = "Moon",
+  [384] = "Moon",
+  [385] = "Goldmoon",
+  [386] = "Goldmoon",
+  [387] = "Moon",
+  [388] = "Moon",
+  [389] = "Moon",
+  [390] = "Moon",
+  [391] = "Moon",
+  [392] = "Moon",
+  [393] = "Moon",
+  [394] = "Moon",
+  [395] = "Moon",
+  [396] = "Moon",
+  [397] = "Moon",
+  [398] = "Moon",
+  [399] = "Moon",
+  [400] = "Moon",
+  [401] = "Moon",
+  [402] = "Moon",
+  [403] = "Moon",
+  [404] = "Moon",
+  [405] = "Moon",
+  [406] = "Moon",
+  [407] = "Moon",
+  [408] = "Goldmoon",
+  [409] = "Moon",
+  [410] = "Rainbow Moon",
+  [411] = "Moon",
+  [412] = "Moon",
+  [413] = "Moon",
+  [414] = "Moon",
+  [415] = "Moon",
+  [416] = "Moon",
+  [417] = "Moon",
+  [418] = "Moon",
+  [419] = "Moon",
+  [420] = "Moon",
+  [421] = "Moon",
+  [422] = "Moon",
+  [423] = "Moon",
+  [424] = "Moon",
+  [425] = "Moon",
+  [426] = "Moon",
+  [427] = "Moon",
+  [428] = "Moon",
+  [429] = "Moon",
+  [430] = "Goldmoon",
+  [431] = "Moon",
+  [432] = "Moon",
+  [433] = "Moon",
+  [434] = "Bloodmoon",
+  [435] = "Moon",
+  [436] = "Moon",
+  [437] = "Moon",
+  [438] = "Moon",
+  [439] = "Moon",
+  [440] = "Goldmoon",
+  [441] = "Moon",
+  [442] = "Moon",
+  [443] = "Moon",
+  [444] = "Moon",
+  [445] = "Moon",
+  [446] = "Moon",
+  [447] = "Moon",
+  [448] = "Goldmoon",
+  [449] = "Moon",
+  [450] = "Moon",
+  [451] = "Goldmoon",
+  [452] = "Moon",
+  [453] = "Moon",
+  [454] = "Moon",
+  [455] = "Rainbow Moon",
+  [456] = "Moon",
+  [457] = "Moon",
+  [458] = "Moon",
+  [459] = "Moon",
+  [460] = "Moon",
+  [461] = "Rainbow Moon",
+  [462] = "Moon",
+  [463] = "Moon",
+  [464] = "Moon",
+  [465] = "Moon",
+  [466] = "Goldmoon",
+  [467] = "Moon",
+  [468] = "Moon",
+  [469] = "Moon",
+  [470] = "Moon",
+  [471] = "Moon",
+  [472] = "Moon",
+  [473] = "Goldmoon",
+  [474] = "Moon",
+  [475] = "Moon",
+  [476] = "Moon",
+  [477] = "Moon",
+  [478] = "Moon",
+  [479] = "Moon",
+  [480] = "Moon",
+  [481] = "Moon",
+  [482] = "Moon",
+  [483] = "Moon",
+  [484] = "Moon",
+  [485] = "Moon",
+  [486] = "Moon",
+  [487] = "Moon",
+  [488] = "Moon",
+  [489] = "Goldmoon",
+  [490] = "Moon",
+  [491] = "Moon",
+  [492] = "Moon",
+  [493] = "Goldmoon",
+  [494] = "Goldmoon",
+  [495] = "Moon",
+  [496] = "Moon",
+  [497] = "Bloodmoon",
+  [498] = "Moon",
+  [499] = "Moon",
+  [500] = "Moon",
+  [501] = "Goldmoon",
+  [502] = "Moon",
+  [503] = "Goldmoon",
+  [504] = "Goldmoon",
+  [505] = "Moon",
+  [506] = "Goldmoon",
+  [507] = "Moon",
+  [508] = "Moon",
+  [509] = "Moon",
+  [510] = "Goldmoon",
+  [511] = "Moon",
+  [512] = "Goldmoon",
+  [513] = "Rainbow Moon",
+  [514] = "Moon",
+  [515] = "Moon",
+  [516] = "Rainbow Moon",
+  [517] = "Moon",
+  [518] = "Moon",
+  [519] = "Moon",
+  [520] = "Moon",
+  [521] = "Moon",
+  [522] = "Moon",
+  [523] = "Goldmoon",
+  [524] = "Rainbow Moon",
+  [525] = "Moon",
+  [526] = "Moon",
+  [527] = "Moon",
+  [528] = "Moon",
+  [529] = "Moon",
+  [530] = "Moon",
+  [531] = "Moon",
+  [532] = "Moon",
+  [533] = "Moon",
+  [534] = "Goldmoon",
+  [535] = "Moon",
+  [536] = "Moon",
+  [537] = "Goldmoon",
+  [538] = "Moon",
+  [539] = "Moon",
+  [540] = "Moon",
+  [541] = "Moon",
+  [542] = "Moon",
+  [543] = "Moon",
+  [544] = "Moon",
+  [545] = "Moon",
+  [546] = "Moon",
+  [547] = "Moon",
+  [548] = "Goldmoon",
+  [549] = "Moon",
+  [550] = "Rainbow Moon",
+  [551] = "Goldmoon",
+  [552] = "Moon",
+  [553] = "Moon",
+  [554] = "Goldmoon",
+  [555] = "Moon",
+  [556] = "Goldmoon",
+  [557] = "Moon",
+  [558] = "Moon",
+  [559] = "Moon",
+  [560] = "Moon",
+  [561] = "Moon",
+  [562] = "Moon",
+  [563] = "Moon",
+  [564] = "Goldmoon",
+  [565] = "Moon",
+  [566] = "Moon",
+  [567] = "Moon",
+  [568] = "Moon",
+  [569] = "Moon",
+  [570] = "Moon",
+  [571] = "Moon",
+  [572] = "Rainbow Moon",
+  [573] = "Moon",
+  [574] = "Moon",
+  [575] = "Moon",
+  [576] = "Moon",
+  [577] = "Moon",
+  [578] = "Moon",
+  [579] = "Moon",
+  [580] = "Moon",
+  [581] = "Goldmoon",
+  [582] = "Moon",
+  [583] = "Moon",
+  [584] = "Rainbow Moon",
+  [585] = "Goldmoon",
+  [586] = "Moon",
+  [587] = "Goldmoon",
+  [588] = "Moon",
+  [589] = "Goldmoon",
+  [590] = "Moon",
+  [591] = "Moon",
+  [592] = "Moon",
+  [593] = "Moon",
+  [594] = "Moon",
+  [595] = "Moon",
+  [596] = "Moon",
+  [597] = "Moon",
+  [598] = "Moon",
+  [599] = "Moon",
+  [600] = "Moon",
+  [601] = "Moon",
+  [602] = "Moon",
+  [603] = "Moon",
+  [604] = "Moon",
+  [605] = "Moon",
+  [606] = "Moon",
+  [607] = "Moon",
+  [608] = "Moon",
+  [609] = "Moon",
+  [610] = "Moon",
+  [611] = "Moon",
+  [612] = "Moon",
+  [613] = "Moon",
+  [614] = "Moon",
+  [615] = "Moon",
+  [616] = "Rainbow Moon",
+  [617] = "Goldmoon",
+  [618] = "Moon",
+  [619] = "Moon",
+  [620] = "Goldmoon",
+  [621] = "Moon",
+  [622] = "Goldmoon",
+  [623] = "Rainbow Moon",
+  [624] = "Moon",
+  [625] = "Moon",
+  [626] = "Moon",
+  [627] = "Moon",
+  [628] = "Moon",
+  [629] = "Moon",
+  [630] = "Moon",
+  [631] = "Moon",
+  [632] = "Moon",
+  [633] = "Moon",
+  [634] = "Moon",
+  [635] = "Moon",
+  [636] = "Moon",
+  [637] = "Moon",
+  [638] = "Moon",
+  [639] = "Moon",
+  [640] = "Goldmoon",
+  [641] = "Moon",
+  [642] = "Moon",
+  [643] = "Moon",
+  [644] = "Moon",
+  [645] = "Moon",
+  [646] = "Moon",
+  [647] = "Moon",
+  [648] = "Moon",
+  [649] = "Moon",
+  [650] = "Moon",
+  [651] = "Moon",
+  [652] = "Moon",
+  [653] = "Moon",
+  [654] = "Moon",
+  [655] = "Moon",
+  [656] = "Rainbow Moon",
+  [657] = "Moon",
+  [658] = "Moon",
+  [659] = "Moon",
+  [660] = "Bloodmoon",
+  [661] = "Moon",
+  [662] = "Moon",
+  [663] = "Moon",
+  [664] = "Moon",
+  [665] = "Moon",
+  [666] = "Moon",
+  [667] = "Moon",
+  [668] = "Goldmoon",
+  [669] = "Rainbow Moon",
+  [670] = "Moon",
+  [671] = "Moon",
+  [672] = "Moon",
+  [673] = "Moon",
+  [674] = "Moon",
+  [675] = "Moon",
+  [676] = "Rainbow Moon",
+  [677] = "Moon",
+  [678] = "Moon",
+  [679] = "Moon",
+  [680] = "Moon",
+  [681] = "Moon",
+  [682] = "Moon",
+  [683] = "Moon",
+  [684] = "Rainbow Moon",
+  [685] = "Moon",
+  [686] = "Goldmoon",
+  [687] = "Moon",
+  [688] = "Moon",
+  [689] = "Moon",
+  [690] = "Moon",
+  [691] = "Moon",
+  [692] = "Moon",
+  [693] = "Goldmoon",
+  [694] = "Moon",
+  [695] = "Moon",
+  [696] = "Moon",
+  [697] = "Moon",
+  [698] = "Moon",
+  [699] = "Moon",
+  [700] = "Goldmoon",
+  [701] = "Goldmoon",
+  [702] = "Moon",
+  [703] = "Moon",
+  [704] = "Moon",
+  [705] = "Goldmoon",
+  [706] = "Moon",
+  [707] = "Moon",
+  [708] = "Moon",
+  [709] = "Moon",
+  [710] = "Moon",
+  [711] = "Goldmoon",
+  [712] = "Moon",
+  [713] = "Moon",
+  [714] = "Moon",
+  [715] = "Moon",
+  [716] = "Moon",
+  [717] = "Goldmoon",
+  [718] = "Moon",
+  [719] = "Rainbow Moon",
+  [720] = "Moon",
+  [721] = "Moon",
+  [722] = "Moon",
+  [723] = "Moon",
+  [724] = "Moon",
+  [725] = "Moon",
+  [726] = "Goldmoon",
+  [727] = "Goldmoon",
+  [728] = "Rainbow Moon",
+  [729] = "Moon",
+  [730] = "Goldmoon",
+  [731] = "Moon",
+  [732] = "Moon",
+  [733] = "Goldmoon",
+  [734] = "Goldmoon",
+  [735] = "Moon",
+  [736] = "Moon",
+  [737] = "Moon",
+  [738] = "Moon",
+  [739] = "Moon",
+  [740] = "Moon",
+  [741] = "Moon",
+  [742] = "Moon",
+  [743] = "Moon",
+  [744] = "Moon",
+  [745] = "Moon",
+  [746] = "Goldmoon",
+  [747] = "Moon",
+  [748] = "Moon",
+  [749] = "Moon",
+  [750] = "Moon",
+  [751] = "Moon",
+  [752] = "Moon",
+  [753] = "Moon",
+  [754] = "Goldmoon",
+  [755] = "Moon",
+  [756] = "Goldmoon",
+  [757] = "Moon",
+  [758] = "Moon",
+  [759] = "Moon",
+  [760] = "Moon",
+  [761] = "Moon",
+  [762] = "Moon",
+  [763] = "Moon",
+  [764] = "Moon",
+  [765] = "Goldmoon",
+  [766] = "Moon",
+  [767] = "Moon",
+  [768] = "Goldmoon",
+  [769] = "Moon",
+  [770] = "Moon",
+  [771] = "Moon",
+  [772] = "Moon",
+  [773] = "Goldmoon",
+  [774] = "Moon",
+  [775] = "Moon",
+  [776] = "Moon",
+  [777] = "Goldmoon",
+  [778] = "Goldmoon",
+  [779] = "Goldmoon",
+  [780] = "Moon",
+  [781] = "Moon",
+  [782] = "Moon",
+  [783] = "Goldmoon",
+  [784] = "Moon",
+  [785] = "Moon",
+  [786] = "Goldmoon",
+  [787] = "Rainbow Moon",
+  [788] = "Moon",
+  [789] = "Moon",
+  [790] = "Moon",
+  [791] = "Moon",
+  [792] = "Moon",
+  [793] = "Moon",
+  [794] = "Rainbow Moon",
+  [795] = "Moon",
+  [796] = "Moon",
+  [797] = "Moon",
+  [798] = "Goldmoon",
+  [799] = "Moon",
+  [800] = "Rainbow Moon",
+  [801] = "Rainbow Moon",
+  [802] = "Rainbow Moon",
+  [803] = "Moon",
+  [804] = "Moon",
+  [805] = "Moon",
+  [806] = "Moon",
+  [807] = "Moon",
+  [808] = "Moon",
+  [809] = "Moon",
+  [810] = "Moon",
+  [811] = "Moon",
+  [812] = "Moon",
+  [813] = "Moon",
+  [814] = "Moon",
+  [815] = "Moon",
+  [816] = "Moon",
+  [817] = "Moon",
+  [818] = "Moon",
+  [819] = "Moon",
+  [820] = "Moon",
+  [821] = "Moon",
+  [822] = "Moon",
+  [823] = "Goldmoon",
+  [824] = "Moon",
+  [825] = "Moon",
+  [826] = "Moon",
+  [827] = "Moon",
+  [828] = "Moon",
+  [829] = "Goldmoon",
+  [830] = "Goldmoon",
+  [831] = "Moon",
+  [832] = "Goldmoon",
+  [833] = "Moon",
+  [834] = "Moon",
+  [835] = "Moon",
+  [836] = "Moon",
+  [837] = "Moon",
+  [838] = "Moon",
+  [839] = "Moon",
+  [840] = "Moon",
+  [841] = "Goldmoon",
+  [842] = "Moon",
+  [843] = "Moon",
+  [844] = "Moon",
+  [845] = "Rainbow Moon",
+  [846] = "Moon",
+  [847] = "Moon",
+  [848] = "Moon",
+  [849] = "Moon",
+  [850] = "Rainbow Moon",
+  [851] = "Moon",
+  [852] = "Bloodmoon",
+  [853] = "Moon",
+  [854] = "Moon",
+  [855] = "Rainbow Moon",
+  [856] = "Moon",
+  [857] = "Moon",
+  [858] = "Moon",
+  [859] = "Moon",
+  [860] = "Moon",
+  [861] = "Goldmoon",
+  [862] = "Moon",
+  [863] = "Moon",
+  [864] = "Moon",
+  [865] = "Moon",
+  [866] = "Moon",
+  [867] = "Moon",
+  [868] = "Moon",
+  [869] = "Moon",
+  [870] = "Bloodmoon",
+  [871] = "Moon",
+  [872] = "Rainbow Moon",
+  [873] = "Moon",
+  [874] = "Moon",
+  [875] = "Goldmoon",
+  [876] = "Moon",
+  [877] = "Moon",
+  [878] = "Moon",
+  [879] = "Moon",
+  [880] = "Moon",
+  [881] = "Moon",
+  [882] = "Bloodmoon",
+  [883] = "Moon",
+  [884] = "Goldmoon",
+  [885] = "Moon",
+  [886] = "Moon",
+  [887] = "Moon",
+  [888] = "Moon",
+  [889] = "Moon",
+  [890] = "Goldmoon",
+  [891] = "Moon",
+  [892] = "Moon",
+  [893] = "Moon",
+  [894] = "Moon",
+  [895] = "Rainbow Moon",
+  [896] = "Moon",
+  [897] = "Moon",
+  [898] = "Moon",
+  [899] = "Moon",
+  [900] = "Moon",
+  [901] = "Bloodmoon",
+  [902] = "Moon",
+  [903] = "Moon",
+  [904] = "Moon",
+  [905] = "Moon",
+  [906] = "Moon",
+  [907] = "Rainbow Moon",
+  [908] = "Bloodmoon",
+  [909] = "Moon",
+  [910] = "Goldmoon",
+  [911] = "Moon",
+  [912] = "Moon",
+  [913] = "Moon",
+  [914] = "Moon",
+  [915] = "Rainbow Moon",
+  [916] = "Moon",
+  [917] = "Goldmoon",
+  [918] = "Moon",
+  [919] = "Goldmoon",
+  [920] = "Moon",
+  [921] = "Moon",
+  [922] = "Moon",
+  [923] = "Moon",
+  [924] = "Rainbow Moon",
+  [925] = "Goldmoon",
+  [926] = "Moon",
+  [927] = "Rainbow Moon",
+  [928] = "Moon",
+  [929] = "Moon",
+  [930] = "Moon",
+  [931] = "Moon",
+  [932] = "Moon",
+  [933] = "Moon",
+  [934] = "Moon",
+  [935] = "Goldmoon",
+  [936] = "Moon",
+  [937] = "Moon",
+  [938] = "Moon",
+  [939] = "Goldmoon",
+  [940] = "Moon",
+  [941] = "Moon",
+  [942] = "Moon",
+  [943] = "Moon",
+  [944] = "Moon",
+  [945] = "Moon",
+  [946] = "Moon",
+  [947] = "Moon",
+  [948] = "Goldmoon",
+  [949] = "Moon",
+  [950] = "Goldmoon",
+  [951] = "Moon",
+  [952] = "Moon",
+  [953] = "Moon",
+  [954] = "Moon",
+  [955] = "Moon",
+  [956] = "Moon",
+  [957] = "Moon",
+  [958] = "Moon",
+  [959] = "Goldmoon",
+  [960] = "Moon",
+  [961] = "Moon",
+  [962] = "Moon",
+  [963] = "Moon",
+  [964] = "Moon",
+  [965] = "Moon",
+  [966] = "Moon",
+  [967] = "Moon",
+  [968] = "Moon",
+  [969] = "Moon",
+  [970] = "Moon",
+  [971] = "Moon",
+  [972] = "Moon",
+  [973] = "Bloodmoon",
+  [974] = "Moon",
+  [975] = "Moon",
+  [976] = "Goldmoon",
+  [977] = "Moon",
+  [978] = "Moon",
+  [979] = "Moon",
+  [980] = "Moon",
+  [981] = "Moon",
+  [982] = "Goldmoon",
+  [983] = "Moon",
+  [984] = "Goldmoon",
+  [985] = "Moon",
+  [986] = "Moon",
+  [987] = "Moon",
+  [988] = "Moon",
+  [989] = "Goldmoon",
+  [990] = "Moon",
+  [991] = "Moon",
+  [992] = "Moon",
+  [993] = "Moon",
+  [994] = "Moon",
+  [995] = "Moon",
+  [996] = "Moon",
+  [997] = "Moon",
+  [998] = "Moon",
+  [999] = "Rainbow Moon",
+  [1000] = "Moon",
+  [1001] = "Moon",
+  [1002] = "Moon",
+  [1003] = "Moon",
+  [1004] = "Rainbow Moon",
+  [1005] = "Moon",
+  [1006] = "Moon",
+  [1007] = "Moon",
+  [1008] = "Moon",
 }
 genv.ftgs_AntiHit = false
 genv.ftgs_AntiStealGuard = false
@@ -850,7 +1861,7 @@ genv.ftgs_AutoSendMail = false
 genv.ftgs_FixLag = false
 genv.ftgs_AutoExecute = false
 genv.ftgs_FakeLag = false
-fakeLagDelay = 0.3
+fakeLagDelay = 2
 fakeLagThread = nil
 fakeLagPreConn = nil
 fakeLagPostConn = nil
@@ -990,7 +2001,7 @@ function loadConfig()
     if data.autoExecute ~= nil then genv.ftgs_AutoExecute = data.autoExecute == true end
     if data.fixLag ~= nil then genv.ftgs_FixLag = data.fixLag == true end
     if data.fakeLag ~= nil then genv.ftgs_FakeLag = data.fakeLag == true end
-    fakeLagDelay = tonumber(data.fakeLagDelay) or fakeLagDelay
+    fakeLagDelay = 2
     if type(data.translateLanguage) == "string" then translateLanguage = data.translateLanguage end
     if type(data.selectedBgTheme) == "string" then selectedBgTheme = data.selectedBgTheme end
     visualMoneyAmount = tonumber(data.visualMoneyAmount) or visualMoneyAmount
@@ -2223,15 +3234,7 @@ function tryHarvestBestOnce()
     if not genv.ftgs_AutoHarvestBest then return end
     local best = findBestHarvestableInGarden()
     if not best then return end
-    if best.replica then
-        safeNetCall(Net.Garden and Net.Garden.CollectFruit, best.plantId, best.fruitId)
-        return
-    end
-    local part = best.fruit.PrimaryPart or best.fruit:FindFirstChildWhichIsA("BasePart", true)
-    if part then briefTpForAction(part.Position) end
-    safeNetCall(Net.Garden and Net.Garden.CollectFruit, best.plantId, best.fruitId)
-    local prompt = best.fruit:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt then fireProximityPrompt(prompt) end
+    safeNetCall(Net.Garden and Net.Garden.CollectFruit, best.plantId, best.fruitId or "")
 end
 
 function tryHarvestOne()
@@ -2312,6 +3315,7 @@ end
 function tryAutoPlant()
     if not genv.ftgs_AutoPlant or plantingBusy or not setHasAny(selectedPlantSeeds) then return end
     if os.clock() - lastPlant < COOLDOWN.Plant then return end
+    if not isInGardenActionRange() then return end
     refreshOwnerPlot()
     if not OwnerPlot then return end
     local seedName, tool = pickNextPlantSeed()
@@ -2322,15 +3326,11 @@ function tryAutoPlant()
     plantingBusy = true
     task.spawn(function()
         if not genv.ftgs_AutoPlant then plantingBusy = false return end
-        movementBypass = true
-        briefTpForAction(pos)
-        task.wait(0.1)
         equipTool(tool)
         tool = findSeedToolByName(seedName) or tool
         safeNetCall(Net.Plant and Net.Plant.PlantSeed, pos, seedName, tool)
         if tool and type(tool.Activate) == "function" then xpcall(function() tool:Activate() end, noopErr) end
         task.wait(0.05)
-        movementBypass = false
         plantingBusy = false
     end)
 end
@@ -2588,10 +3588,21 @@ function getPlotStealOwner(plot)
     return owner, uid
 end
 
+function isOwnerInPlot(plot, owner)
+    if not plot or not owner then return false end
+    local area = plot:FindFirstChild("Visual") and plot.Visual:FindFirstChild("PlotSizeReferenceVisual")
+    if not area then return false end
+    for _, t in Services.Workspace:GetPartBoundsInBox(area.CFrame, area.Size) do
+        if owner.Character and t:IsDescendantOf(owner.Character) then return true end
+    end
+    return false
+end
+
 function isPlotStealable(plot)
     if not plot then return false end
     local owner, uid = getPlotStealOwner(plot)
     if owner == LocalPlayer then return false end
+    if owner and isOwnerInPlot(plot, owner) then return false end
     if owner == nil and uid == 0 then return true end
     if owner and plotUnlocked(owner) then return true end
     return false
@@ -2692,7 +3703,7 @@ function stealFruit(fruit, ownerUserId, sessionId)
     local fruitCountBefore = getFruitCount()
     movementBypass = true
     gardenActionLock = true
-    slowFlyTo(stealPos)
+    tpInstant(stealPos)
     local deadline = os.clock() + STEAL_HOLD_TIMEOUT
 
     while os.clock() < deadline do
@@ -2701,7 +3712,7 @@ function stealFruit(fruit, ownerUserId, sessionId)
         if not fruit.Parent then break end
         tpInstant(stealPos)
         local prompt = getStealPrompt(fruit)
-        if prompt then fireProximityPrompt(prompt) end
+        if prompt then fireProximityPromptFast(prompt) end
         safeNetCall(Net.Steal and Net.Steal.BeginSteal, uid, plantId, fruitId)
         safeNetCall(Net.Steal and Net.Steal.CompleteSteal)
         task.wait(STEAL_TICK)
@@ -2728,24 +3739,43 @@ function tryAutoSteal()
         safeNetCall(Net.Garden and Net.Garden.RequestGardens)
         task.wait(0.03)
         movementBypass = true
-        local targets = collectAllStealTargets()
-        local stolen = 0
-        for _, t in ipairs(targets) do
-            if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then break end
-            if stolen >= STEAL_BATCH or isInventoryFull() then break end
-            if t.owner and not plotUnlocked(t.owner) then continue end
-            local uid = t.ownerUserId
-            if t.owner then uid = t.owner.UserId end
-            if stealFruit(t.fruit, uid, sessionId) then stolen += 1 end
-            if stolen >= STEAL_BATCH then break end
-            task.wait(0.03)
-        end
-        if stolen > 0 and genv.ftgs_AutoSteal and sessionId == stealSessionId then
-            returnToGarden()
-            task.wait(0.08)
+        gardenActionLock = true
+        while genv.ftgs_AutoSteal and sessionId == stealSessionId and not isInventoryFull() do
+            local targets = collectAllStealTargets()
+            if #targets == 0 then break end
+            local worked = false
+            for _, t in ipairs(targets) do
+                if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then break end
+                if isInventoryFull() then break end
+                local plot = t.plot
+                local owner = t.owner
+                if owner and isOwnerInPlot(plot, owner) then continue end
+                if owner and not plotUnlocked(owner) then continue end
+                local uid = owner and owner.UserId or t.ownerUserId
+                local fruits = getStealableFruitsOnPlot(plot, STEAL_BATCH)
+                if #fruits == 0 then continue end
+                local stolenOnPlot = 0
+                for _, fruit in fruits do
+                    if not genv.ftgs_AutoSteal or sessionId ~= stealSessionId then break end
+                    if isInventoryFull() then break end
+                    if owner and isOwnerInPlot(plot, owner) then break end
+                    if stealFruit(fruit, uid, sessionId) then
+                        stolenOnPlot += 1
+                        worked = true
+                    end
+                    task.wait(0.015)
+                end
+                if stolenOnPlot > 0 and genv.ftgs_AutoSteal and sessionId == stealSessionId then
+                    returnToGarden()
+                    task.wait(0.05)
+                end
+                if worked then break end
+            end
+            if not worked then break end
         end
         if sessionId == stealSessionId then
             movementBypass = false
+            gardenActionLock = false
             stealBusy = false
         end
     end)
@@ -2820,10 +3850,18 @@ function tryBuyPet()
             if pos then
                 activeDefendPetPos = pos
                 stickToPosition(pos)
-                if shouldDefendPetAt(pos) then
+                local intruders = getPlayersNearPosition(pos, PET_DEFEND_RADIUS)
+                if #intruders > 0 and genv.ftgs_AutoDefendPet then
                     attackNearbyIntruders(pos)
-                    sendAutoClick(8)
-                    task.wait(0.02)
+                elseif #intruders > 0 then
+                    for _, target in intruders do
+                        local thrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+                        if thrp then
+                            tpInstant(thrp.Position + (thrp.CFrame.LookVector * -4))
+                            sendAutoClick(10)
+                        end
+                    end
+                    stickToPosition(pos)
                 end
             end
             doTame()
@@ -3088,13 +4126,17 @@ end
 
 function applyVisualMoney()
     if visualMoneyAmount == nil or visualMoneyAmount == 0 then
-        local real = PlayerReplica and PlayerReplica.Data and PlayerReplica.Data.Sheckles
-        if real == nil then return end
+        local restore = visualMoneyBackup
         local ls = LocalPlayer:FindFirstChild("leaderstats")
         local s = ls and ls:FindFirstChild("Sheckles")
-        if s then s.Value = real end
+        if s and restore ~= nil then s.Value = restore end
+        if PlayerReplica and PlayerReplica.Data and restore ~= nil then
+            PlayerReplica.Data.Sheckles = restore
+        end
+        visualMoneyBackup = nil
         return
     end
+    if visualMoneyBackup == nil then visualMoneyBackup = getSheckles() end
     local ls = LocalPlayer:FindFirstChild("leaderstats")
     local s = ls and ls:FindFirstChild("Sheckles")
     if s then s.Value = visualMoneyAmount end
@@ -3523,7 +4565,8 @@ end
 
 function setFakeLag(on, delay)
     genv.ftgs_FakeLag = on == true
-    if delay ~= nil then fakeLagDelay = math.max(0.05, tonumber(delay) or fakeLagDelay or 0.3) end
+    fakeLagDelay = 2
+    if delay ~= nil then fakeLagDelay = math.max(0.05, tonumber(delay) or fakeLagDelay) end
     saveConfig()
     stopFakeLag()
     if not genv.ftgs_FakeLag then return end
@@ -4201,15 +5244,74 @@ function hexColor(hex)
     return Color3.fromRGB(tonumber(hex:sub(1, 2), 16) or 255, tonumber(hex:sub(3, 4), 16) or 255, tonumber(hex:sub(5, 6), 16) or 255)
 end
 
-function getMoonTypeForCycle(cycleID, order)
-    local rng = Random.new(cycleID * 1000 + (order or 3))
-    local roll = rng:NextNumber() * 100
-    local sum = 0
-    for _, moon in MOON_EVENT_CHANCES do
-        sum += moon.Chance
-        if roll <= sum then return moon.Name end
+function normalizeMoonDisplayName(name)
+    if name == "Goldmoon" then return "Gold Moon" end
+    return name or "Moon"
+end
+
+function getWeatherNameForCyclePhase(cyc, pi)
+    if pi == 0 then return "Day" end
+    if pi == 1 then return "Sunset" end
+    local idx = cyc - MOON_WEATHER_START_CYCLE + 1
+    return MOON_WEATHER_SEQ[idx] or "Moon"
+end
+
+function weatherAtUnix(t)
+    local cyc = math.floor(t / MOON_WEATHER_CLEN)
+    local into = t - cyc * MOON_WEATHER_CLEN
+    local pi = 0
+    for i = 2, #MOON_WEATHER_PHASES do
+        if into >= MOON_WEATHER_PHASES[i].offset then pi = i - 1 end
     end
-    return "Moon"
+    local name = getWeatherNameForCyclePhase(cyc, pi)
+    local nextOff = (pi + 1 < #MOON_WEATHER_PHASES) and MOON_WEATHER_PHASES[pi + 2].offset or MOON_WEATHER_CLEN
+    return {
+        name = name,
+        phaseName = MOON_WEATHER_PHASES[pi + 1].name,
+        secsLeft = math.max(0, cyc * MOON_WEATHER_CLEN + nextOff - t),
+        cyc = cyc,
+        pi = pi,
+    }
+end
+
+function upcomingWeatherEvents(limit)
+    limit = limit or 12
+    local t = os.time()
+    local out = {}
+    local cur = weatherAtUnix(t)
+    if not cur then return out end
+    local cyc, pi = cur.cyc, cur.pi
+    for _ = 1, 400 do
+        pi += 1
+        if pi >= #MOON_WEATHER_PHASES then pi = 0; cyc += 1 end
+        local idx = cyc - MOON_WEATHER_START_CYCLE + 1
+        if idx < 1 or idx > #MOON_WEATHER_SEQ then break end
+        local name = getWeatherNameForCyclePhase(cyc, pi)
+        if not MOON_WEATHER_SKIP[name] then
+            local startT = cyc * MOON_WEATHER_CLEN + MOON_WEATHER_PHASES[pi + 1].offset
+            out[#out + 1] = { name = normalizeMoonDisplayName(name), eta = math.max(0, startT - t) }
+            if #out >= limit then break end
+        end
+    end
+    return out
+end
+
+function getMoonPredictionRows(limit)
+    limit = limit or 4
+    local out = {}
+    local cur = weatherAtUnix(os.time())
+    if cur and cur.name and not MOON_WEATHER_SKIP[cur.name] then
+        out[#out + 1] = { name = normalizeMoonDisplayName(cur.name), eta = cur.secsLeft, now = true }
+    end
+    for _, ev in upcomingWeatherEvents(24) do
+        local seen = false
+        for _, e in out do
+            if e.name == ev.name and math.abs(e.eta - ev.eta) < 3 then seen = true break end
+        end
+        if not seen then out[#out + 1] = ev end
+        if #out >= limit then break end
+    end
+    return out
 end
 
 function formatEtaShort(sec)
@@ -4217,26 +5319,8 @@ function formatEtaShort(sec)
     local h = math.floor(sec / 3600)
     local m = math.floor((sec % 3600) / 60)
     local s = sec % 60
-    if h > 0 then return string.format("%dh %dm %ds", h, m, s) end
-    return string.format("%dm %ds", m, s)
-end
-
-function getNextSpecialMoonEvents(limit)
-    limit = limit or 4
-    local now = os.time()
-    local wanted = { ["Gold Moon"] = true, ["Rainbow Moon"] = true, Bloodmoon = true, ["Mega Moon"] = true }
-    local found, seen = {}, {}
-    for t = now, now + 86400, MOON_CYCLE_SEC do
-        local cycleID = math.floor(t / MOON_CYCLE_SEC)
-        local moonType = getMoonTypeForCycle(cycleID, 3)
-        if wanted[moonType] and not seen[moonType] then
-            seen[moonType] = true
-            found[#found + 1] = { name = moonType, eta = math.max(0, t - now) }
-        end
-        if #found >= limit then break end
-    end
-    table.sort(found, function(a, b) return a.eta < b.eta end)
-    return found
+    if h > 0 then return string.format("%dh%dm%ds", h, m, s) end
+    return string.format("%dm%ds", m, s)
 end
 
 function setupMoonPredictionWidget()
@@ -4295,11 +5379,12 @@ function setupMoonPredictionWidget()
     end
     task.spawn(function()
         while moonPredictGui and moonPredictGui.Parent do
-            local events = getNextSpecialMoonEvents(4)
+            local events = getMoonPredictionRows(4)
             for i = 1, 4 do
                 local ev = events[i]
                 if ev then
-                    rows[i].Text = string.format("%s  %s", ev.name, formatEtaShort(ev.eta))
+                    local prefix = ev.now and "" or "in "
+                    rows[i].Text = string.format("%s  %s%s", ev.name, prefix, formatEtaShort(ev.eta))
                 else
                     rows[i].Text = "—"
                 end
@@ -4502,11 +5587,6 @@ ServerTab:Button({ Title = "Join Job ID (1 click)", Icon = "log-in", Callback = 
 end })
 
 SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings" })
-SettingsTab:Section({ Title = "UI Theme" })
-SettingsTab:Dropdown({ Title = "UI Color", Values = UI_THEME_NAMES, Value = selectedUITheme, Callback = function(v)
-    if type(v) == "table" then v = v[1] end
-    applyUITheme(v or selectedUITheme)
-end })
 SettingsTab:Input({ Title = "Webhook URL", Value = webhookUrl, Callback = function(v) webhookUrl = v or "" genv.ftgs_webhookUrl = webhookUrl saveConfig() end })
 SettingsTab:Toggle({ Title = "Auto Notification", Desc = "Send webhook on interval", Default = genv.ftgs_AutoWebhook or false, Callback = function(s)
     genv.ftgs_AutoWebhook = s
@@ -4579,20 +5659,10 @@ SettingsTab:Dropdown({ Title = "Language", Desc = "Instant translate NTMT Hub UI
     if type(v) == "table" then v = v[1] end
     applyUiLanguage(v or translateLanguage)
 end })
-SettingsTab:Section({ Title = "UI Background (1 click)" })
-for themeName in { "Doraemon", "Shinnosuke", "Spiderman", "Lunar", "Spongebob", "None" } do
-    SettingsTab:Button({ Title = "Theme: " .. themeName, Icon = "image", Callback = function()
-        applyHubBackgroundImage(themeName)
-        hubNotify("Theme", themeName)
-    end })
-end
 SettingsTab:Section({ Title = "Fake Lag" })
-SettingsTab:Input({ Title = "Fake Lag delay (sec)", Value = "", Placeholder = "default 0.3 | 2 = slowmo for others", Callback = function(v)
-    if v and v ~= "" then fakeLagDelay = math.max(0.05, tonumber(v) or fakeLagDelay) end
+SettingsTab:Toggle({ Title = "Fake Lag", Desc = "You move normal — others see 2s delayed position", Default = genv.ftgs_FakeLag or false, Callback = function(s)
+    setFakeLag(s, 2)
     saveConfig()
-end })
-SettingsTab:Toggle({ Title = "Fake Lag", Desc = "You move normal — others see delayed position", Default = genv.ftgs_FakeLag or false, Callback = function(s)
-    setFakeLag(s, fakeLagDelay)
 end })
 
 InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
@@ -4799,7 +5869,7 @@ setupShopRestockWatch()
 cacheScriptSourceForAutoExec()
 setupAutoExecute()
 if genv.ftgs_FixLag then startFixLag() end
-if genv.ftgs_FakeLag then setFakeLag(true, fakeLagDelay) end
+if genv.ftgs_FakeLag then setFakeLag(true, 2) end
 task.defer(function()
     xpcall(setupHubUiTranslationWatcher, noopErr)
 end)
