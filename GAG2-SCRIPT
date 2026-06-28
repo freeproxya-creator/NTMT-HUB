@@ -3209,6 +3209,14 @@ function trackPetBuy(name, price)
     if e then e.amount += 1 else BoughtPets[name] = { amount = 1, price = price or 0 } end
 end
 
+function isModelGrown(model)
+    if not model then return false end
+    local maxAge = model:GetAttribute("MaxAge")
+    local currentAge = model:GetAttribute("Age")
+    if maxAge == nil or currentAge == nil then return false end
+    return currentAge >= maxAge
+end
+
 function isDataReady(data)
     if type(data) ~= "table" then return false end
     local maxAge = data.MaxAge or 0
@@ -3217,52 +3225,89 @@ function isDataReady(data)
 end
 
 function isPhysicalFruitRipe(fruit, plant)
-    if not fruit then return false end
-    local maxAge = fruit:GetAttribute("MaxAge") or (plant and plant:GetAttribute("MaxAge"))
-    local age = fruit:GetAttribute("Age") or fruit:GetAttribute("SizeMulti")
-    if type(maxAge) == "number" and maxAge > 0 and type(age) == "number" then
-        return age >= maxAge
+    return isModelGrown(fruit) or (not fruit and plant and isModelGrown(plant))
+end
+
+function getHarvestPlantId(plantModel, fruitModel)
+    if fruitModel then
+        return fruitModel:GetAttribute("PlantId")
+            or fruitModel:GetAttribute("PlantID")
+            or (plantModel and (plantModel:GetAttribute("PlantId") or plantModel:GetAttribute("PlantID")))
+            or (plantModel and plantModel.Name)
     end
-    local prompt = fruit:FindFirstChildWhichIsA("ProximityPrompt", true)
-    return prompt ~= nil and getStealPrompt(fruit) == nil
+    return (plantModel and (plantModel:GetAttribute("PlantId") or plantModel:GetAttribute("PlantID") or plantModel.Name))
+end
+
+function getHarvestFruitId(fruitModel)
+    if not fruitModel then return "" end
+    return fruitModel:GetAttribute("FruitId") or fruitModel:GetAttribute("FruitID") or ""
+end
+
+function getHarvestableFromPlot()
+    refreshOwnerPlot()
+    local out = {}
+    local pf = OwnerPlot and OwnerPlot:FindFirstChild("Plants")
+    if not pf then return out end
+    for _, plant in pf:GetChildren() do
+        local fruitsFolder = plant:FindFirstChild("Fruits")
+        if fruitsFolder then
+            for _, fruit in fruitsFolder:GetChildren() do
+                if fruit:IsA("Model") and isModelGrown(fruit) then
+                    out[#out + 1] = {
+                        model = fruit,
+                        plantModel = plant,
+                        plantId = getHarvestPlantId(plant, fruit),
+                        fruitId = getHarvestFruitId(fruit),
+                    }
+                end
+            end
+        elseif plant:IsA("Model") and isModelGrown(plant) then
+            out[#out + 1] = {
+                model = plant,
+                plantModel = plant,
+                plantId = getHarvestPlantId(plant, nil),
+                fruitId = "",
+            }
+        end
+    end
+    return out
+end
+
+function shouldHarvestModelEntry(entry)
+    if not entry or not entry.plantId then return false end
+    local fruit = entry.model
+    local plant = entry.plantModel
+    local seedName = getFruitStealName(fruit)
+        or (plant and (plant:GetAttribute("PlantName") or plant:GetAttribute("SeedName")))
+    if setHasAny(exceptHarvestPlants) and seedName and seedInSet(exceptHarvestPlants, seedName) then
+        return false
+    end
+    if setHasAny(collectOnlyPlants) and (not seedName or not seedInSet(collectOnlyPlants, seedName)) then
+        return false
+    end
+    if harvestMaxWeight > 0 and fruit then
+        local w = fruit:GetAttribute("Weight") or fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("Age")
+        if type(w) == "number" and w > harvestMaxWeight then return false end
+    end
+    return true
+end
+
+function harvestFruitRemote(plantId, fruitId)
+    if not plantId then return false end
+    return safeNetCall(Net.Garden and Net.Garden.CollectFruit, plantId, fruitId or "")
 end
 
 function findBestHarvestableInGarden()
-    refreshOwnerPlot()
     local best
-    local pf = OwnerPlot and OwnerPlot:FindFirstChild("Plants")
-    if pf then
-        for _, plant in pf:GetChildren() do
-            local fruits = plant:FindFirstChild("Fruits")
-            local scan = fruits and fruits:GetChildren() or { plant }
-            for _, fr in scan do
-                if isPhysicalFruitRipe(fr, plant) then
-                    local val = calculateStealValue(fr)
-                    if not best or val > best.value then
-                        best = {
-                            fruit = fr,
-                            plantId = plant:GetAttribute("PlantId") or plant:GetAttribute("PlantID") or plant.Name,
-                            fruitId = fr:GetAttribute("FruitId") or fr:GetAttribute("FruitID") or fr.Name,
-                            value = val,
-                        }
-                    end
-                end
-            end
-        end
-    end
-    for plantId, plantData in pairs(trackedPlants) do
-        if type(plantData) ~= "table" then continue end
-        local fruits = plantData.Fruits
-        if type(fruits) == "table" then
-            for fruitId, fruitData in pairs(fruits) do
-                if isDataReady(fruitData) then
-                    local val = 0
-                    local ok, v = xpcall(FruitValueCalc, noopErr, getPlantSeedName(fruitData), fruitData.SizeMulti or fruitData.Age, fruitData.Mutation, LocalPlayer, 1)
-                    if ok then val = v or 0 end
-                    if not best or val > best.value then
-                        best = { plantId = plantId, fruitId = fruitId, value = val, replica = true }
-                    end
-                end
+    for _, entry in ipairs(getHarvestableFromPlot()) do
+        if shouldHarvestModelEntry(entry) then
+            local val = calculateStealValue(entry.model)
+            if not best or val > best.value then
+                best = {
+                    plantId = entry.plantId,
+                    fruitId = entry.fruitId,
+                    value = val,
+                }
             end
         end
     end
@@ -3273,39 +3318,16 @@ function tryHarvestBestOnce()
     if not genv.ftgs_AutoHarvestBest then return end
     local best = findBestHarvestableInGarden()
     if not best then return end
-    safeNetCall(Net.Garden and Net.Garden.CollectFruit, best.plantId, best.fruitId or "")
+    harvestFruitRemote(best.plantId, best.fruitId)
 end
 
 function tryHarvestOne()
     if not genv.ftgs_AutoHarvest then return end
-    local n = 0
-    local now = os.clock()
-    for plantId, plantData in pairs(trackedPlants) do
-        if type(plantData) ~= "table" then continue end
-        local fruits = plantData.Fruits
-        if type(fruits) == "table" then
-            for fruitId, fruitData in pairs(fruits) do
-                if isDataReady(fruitData) and shouldHarvestTarget(plantData, fruitData) then
-                    local key = tostring(plantId) .. "|" .. tostring(fruitId)
-                    if not firedSet[key] and n < HARVEST_BATCH then
-                        safeNetCall(Net.Garden and Net.Garden.CollectFruit, plantId, fruitId)
-                        firedSet[key] = now
-                        n += 1
-                    end
-                end
-            end
+    for _, entry in ipairs(getHarvestableFromPlot()) do
+        if shouldHarvestModelEntry(entry) then
+            harvestFruitRemote(entry.plantId, entry.fruitId)
+            return
         end
-        if isDataReady(plantData) and shouldHarvestTarget(plantData, nil) then
-            local key = tostring(plantId) .. "|_plant"
-            if not firedSet[key] and n < HARVEST_BATCH then
-                safeNetCall(Net.Garden and Net.Garden.CollectFruit, plantId, "")
-                firedSet[key] = now
-                n += 1
-            end
-        end
-    end
-    for key, time in pairs(firedSet) do
-        if now - time > 30 then firedSet[key] = nil end
     end
 end
 
