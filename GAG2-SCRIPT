@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.9 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.9")
+--[[ NTMT HUB - Grow a Garden 2 v1 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v1")
 
 pcall(function()
     if delfile and isfile then
@@ -5571,7 +5571,7 @@ Window = WindUI:CreateWindow({
 })
 markHubScreenGuis()
 if type(Window.Tag) == "function" then
-    xpcall(function() Window:Tag({ Title = "v6.9", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
+    xpcall(function() Window:Tag({ Title = "v1", Icon = "github", Color = hexColor("#1c1c1c"), Border = true }) end, noopErr)
 end
 applyUITheme(selectedUITheme)
 task.defer(function()
@@ -5612,23 +5612,23 @@ MainTab:Input({ Title = "Harvest max weight (kg)", Value = tostring(harvestMaxWe
 end })
 multiDropdown(MainTab, "Except Harvest", SeedNames, exceptHarvestPlants, true)
 multiDropdown(MainTab, "Collect Only", SeedNames, collectOnlyPlants, true)
-makeToggle(MainTab, "Auto Sell", "Sell when bag full", "ftgs_AutoSell")
-makeToggle(MainTab, "Auto Sell Everytime", "Sell loop 0.01s", "ftgs_AutoSellEverytime")
+makeToggle(MainTab, "Auto Sell WHEN FULL BAG", "Sell when bag full", "ftgs_AutoSell")
+makeToggle(MainTab, "Auto Sell", "auto sell", "ftgs_AutoSellEverytime")
 MainTab:Section({ Title = "Favorite Fruits" })
 MainTab:Dropdown({ Title = "Select Fruit", Values = SeedNames, Value = selectedFavoriteFruit, Callback = function(v)
     if type(v) == "table" then v = v[1] end
     selectedFavoriteFruit = v or selectedFavoriteFruit
     saveConfig()
 end })
-makeToggle(MainTab, "Auto Favorite Fruit", "0.01s per fruit (selected)", "ftgs_AutoFavoriteSelect")
-makeToggle(MainTab, "Auto Unfavorite Fruit", "0.01s per fruit (selected)", "ftgs_AutoUnfavoriteSelect")
-makeToggle(MainTab, "Auto Favorite All", "0.01s per fruit", "ftgs_AutoFavoriteAll")
-makeToggle(MainTab, "Auto Unfavorite All", "0.01s per fruit", "ftgs_AutoUnfavoriteAll")
-makeToggle(MainTab, "Anti Steal", "Night: auto TP garden center | Day: normal", "ftgs_AntiStealGuard")
-makeToggle(MainTab, "Auto Expand Garden", "Auto expand plot", "ftgs_AutoExpand")
-makeToggle(MainTab, "Auto Sprinkler", "TP to plant then place (no duplicate per plant)", "ftgs_AutoSprinkler")
+makeToggle(MainTab, "Auto Favorite Fruit", "auto favorite fruit selected", "ftgs_AutoFavoriteSelect")
+makeToggle(MainTab, "Auto Unfavorite Fruit", "auto unfavorite fruit selected", "ftgs_AutoUnfavoriteSelect")
+makeToggle(MainTab, "Auto Favorite All", "favorite all fruit inventory", "ftgs_AutoFavoriteAll")
+makeToggle(MainTab, "Auto Unfavorite All", "unfavorite all fruit inventory", "ftgs_AutoUnfavoriteAll")
+makeToggle(MainTab, "Anti Steal", "lock your garden", "ftgs_AntiStealGuard")
+makeToggle(MainTab, "Auto Expand Garden", "Auto expand plot garden", "ftgs_AutoExpand")
+makeToggle(MainTab, "Auto Sprinkler", "auto sprinkler", "ftgs_AutoSprinkler")
 multiDropdown(MainTab, "Select Sprinklers", SPRINKLER_LIST, selectedSprinklers)
-makeToggle(MainTab, "Auto Water", "TP + hold watering can on selected crops", "ftgs_AutoWater")
+makeToggle(MainTab, "Auto Water", "auto water fruit you selected", "ftgs_AutoWater")
 multiDropdown(MainTab, "Water Plants", WaterPlantNames, selectedWaterPlants, false)
 MainTab:Section({ Title = "Auto Mail" })
 MainTab:Input({ Title = "Username", Value = mailUsername, Placeholder = "recipient username", Callback = function(v) mailUsername = v or "" saveConfig() end })
@@ -5653,35 +5653,35 @@ MainTab:Input({ Title = "Mail message", Value = mailMessage, Placeholder = "mess
 end })
 
 AutoTab = Window:Tab({ Title = "Automation", Icon = "bot" })
-AutoTab:Toggle({ Title = "Auto Steal", Desc = "TP + steal best fruit per plot (filter below)", Default = genv.ftgs_AutoSteal or false, Callback = function(s)
+AutoTab:Toggle({ Title = "Auto Steal", Desc = "auto steal fruit ( filter below )", Default = genv.ftgs_AutoSteal or false, Callback = function(s)
     genv.ftgs_AutoSteal = s
     saveConfig()
     if not s then cancelStealAction() end
 end })
-AutoTab:Dropdown({ Title = "Select Steal Fruits", Values = SeedNames, Multi = true, AllowNone = true, Callback = function(sel)
+AutoTab:Dropdown({ Title = "Select Steal Fruits You Want", Values = SeedNames, Multi = true, AllowNone = true, Callback = function(sel)
     parseMultiSelect(sel, selectedStealFruits)
     saveConfig()
 end })
-makeToggle(AutoTab, "Auto Collect Drops", "TP nearest drop + pickup", "ftgs_AutoCollectDrops")
-makeToggle(AutoTab, "Auto Collect Mutation Seeds", "Stick spawn + fast claim until gone", "ftgs_AutoCollectMutation")
-makeToggle(AutoTab, "Auto Plant", "Remote plant — skip garden center", "ftgs_AutoPlant")
+makeToggle(AutoTab, "Auto Collect item", "collect item drop", "ftgs_AutoCollectDrops")
+makeToggle(AutoTab, "Auto Collect Seeds", "collect rainbow and gold and mega seeds", "ftgs_AutoCollectMutation")
+makeToggle(AutoTab, "Auto Plant", "auto plant ( must be in your garden ) ", "ftgs_AutoPlant")
 multiDropdown(AutoTab, "Plant Seeds", PlantSeedNames, selectedPlantSeeds, false)
-makeToggle(AutoTab, "Auto Shovel", "Remove selected seed plants (batch)", "ftgs_AutoShovel")
+makeToggle(AutoTab, "Auto Shovel", "shovel fruit you select", "ftgs_AutoShovel")
 multiDropdown(AutoTab, "Shovel Seeds", SeedNames, selectedShovelSeeds, false)
-makeToggle(AutoTab, "Auto Buy Pet", "Follow pet + tame", "ftgs_AutoBuyPet")
+makeToggle(AutoTab, "Auto Buy Pet", "select pet to buy", "ftgs_AutoBuyPet")
 multiDropdown(AutoTab, "Select Pets", PET_LIST, selectedPets, false)
 
 ShopTab = Window:Tab({ Title = "Shop", Icon = "shopping-cart" })
-makeToggle(ShopTab, "Auto Buy Seed", "Fast seed buy", "ftgs_AutoBuySeed")
-makeToggle(ShopTab, "Auto Buy All Seed", "Buy all in stock", "ftgs_AutoBuyAllSeed")
+makeToggle(ShopTab, "Auto Buy Seed", "select seeds to buy", "ftgs_AutoBuySeed")
+makeToggle(ShopTab, "Auto Buy All Seed", "Buy all seed in shop", "ftgs_AutoBuyAllSeed")
 ShopTab:Dropdown({ Title = "Select Seeds", Values = PlantSeedNames, Multi = true, AllowNone = true, Callback = function(sel)
     table.clear(selectedBuySeeds)
     if type(sel) == "table" then for k, v in pairs(sel) do
         if type(v) == "string" then selectedBuySeeds[v] = true elseif type(k) == "string" and v then selectedBuySeeds[k] = true end
     end end
 end })
-makeToggle(ShopTab, "Auto Buy Gear", "Fast gear buy", "ftgs_AutoBuyGear")
-makeToggle(ShopTab, "Auto Buy All Gear", "Buy all in stock", "ftgs_AutoBuyAllGear")
+makeToggle(ShopTab, "Auto Buy Gear", "select gears to buy", "ftgs_AutoBuyGear")
+makeToggle(ShopTab, "Auto Buy All Gear", "Buy all gears in stock", "ftgs_AutoBuyAllGear")
 ShopTab:Dropdown({ Title = "Select Gears", Values = GearNames, Multi = true, AllowNone = true, Callback = function(sel)
     table.clear(selectedBuyGears)
     if type(sel) == "table" then for k, v in pairs(sel) do
@@ -5689,53 +5689,53 @@ ShopTab:Dropdown({ Title = "Select Gears", Values = GearNames, Multi = true, All
     end end
 end })
 ShopTab:Section({ Title = "SEED SHOP (PREDICTION)" })
-seedShopPredict = ShopTab:Paragraph({ Title = "name seed stock coming | amount | time coming | money", Desc = "Loading..." })
+seedShopPredict = ShopTab:Paragraph({ Title = "seed coming | amount | when | money", Desc = "Loading..." })
 ShopTab:Section({ Title = "SEED SHOP (LIVE)" })
-seedShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
+seedShopLive = ShopTab:Paragraph({ Title = "seed stock now | amount | price", Desc = "Loading..." })
 ShopTab:Section({ Title = "GEAR SHOP (PREDICTION)" })
-gearShopPredict = ShopTab:Paragraph({ Title = "name gear stock coming | amount | time coming | money", Desc = "Loading..." })
+gearShopPredict = ShopTab:Paragraph({ Title = "gear cooming | amount | when | money", Desc = "Loading..." })
 ShopTab:Section({ Title = "GEAR SHOP (LIVE)" })
-gearShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
+gearShopLive = ShopTab:Paragraph({ Title = "gear stock now | amount | price", Desc = "Loading..." })
 
 WeatherTab = Window:Tab({ Title = "Weather", Icon = "cloud-sun" })
 WeatherTab:Section({ Title = "WEATHER PREDICTION" })
-weatherPredictPara = WeatherTab:Paragraph({ Title = "weather name | when coming", Desc = "Loading..." })
+weatherPredictPara = WeatherTab:Paragraph({ Title = "weather name | when", Desc = "Loading..." })
 WeatherTab:Section({ Title = "WEATHER (LIVE)" })
-weatherLivePara = WeatherTab:Paragraph({ Title = "name weather right now | when end", Desc = "Loading..." })
+weatherLivePara = WeatherTab:Paragraph({ Title = "name weather right now | end", Desc = "Loading..." })
 
 ServerTab = Window:Tab({ Title = "Server Hop", Icon = "globe" })
-makeToggle(ServerTab, "Auto Hop Server", "Hop every 15s (skip same server)", "ftgs_AutoHop")
-makeToggle(ServerTab, "Auto Join Private", "Try VIP/private servers", "ftgs_AutoJoinPrivate")
-ServerTab:Input({ Title = "Private Server Code / Link", Value = privateServerCode, Placeholder = "paste VIP code or roblox private link", Callback = function(v)
+makeToggle(ServerTab, "Auto Hop Server", "auto hop to another server", "ftgs_AutoHop")
+makeToggle(ServerTab, "Auto Join Private", "join private server put your private server below", "ftgs_AutoJoinPrivate")
+ServerTab:Input({ Title = "Private Server link", Value = privateServerCode, Placeholder = "paste ur private server link", Callback = function(v)
     privateServerCode = v or ""
     saveConfig()
 end })
-ServerTab:Button({ Title = "Join Private Server (1 click)", Icon = "key", Callback = function()
+ServerTab:Button({ Title = "Join Private Server", Icon = "key", Callback = function()
     smartJoinPrivateServer()
 end })
-ServerTab:Button({ Title = "Hop Server (1 click)", Icon = "shuffle", Callback = function() hopToRandomServer() end })
+ServerTab:Button({ Title = "Hop Server", Icon = "shuffle", Callback = function() hopToRandomServer() end })
 ServerTab:Button({ Title = "Rejoin Server", Icon = "refresh-cw", Callback = function()
     Services.TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
 end })
 ServerTab:Input({ Title = "Job ID", Value = "", Placeholder = "paste job id", Callback = function(v) inputJobId = v or "" end })
-ServerTab:Button({ Title = "Join Job ID (1 click)", Icon = "log-in", Callback = function()
+ServerTab:Button({ Title = "Join server wtith job id })", Icon = "log-in", Callback = function()
     if inputJobId ~= "" then Services.TeleportService:TeleportToPlaceInstance(game.PlaceId, inputJobId, LocalPlayer) end
 end })
 
 SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings" })
 SettingsTab:Input({ Title = "Webhook URL", Value = webhookUrl, Callback = function(v) webhookUrl = v or "" genv.ftgs_webhookUrl = webhookUrl saveConfig() end })
-SettingsTab:Toggle({ Title = "Auto Notification", Desc = "Send webhook on interval", Default = genv.ftgs_AutoWebhook or false, Callback = function(s)
+SettingsTab:Toggle({ Title = "Auto Notification", Desc = "update your status", Default = genv.ftgs_AutoWebhook or false, Callback = function(s)
     genv.ftgs_AutoWebhook = s
     saveConfig()
 end })
-SettingsTab:Input({ Title = "Notify every (minutes)", Value = tostring(webhookIntervalMin), Callback = function(v)
+SettingsTab:Input({ Title = "Notify every (minutes) 1 = 1 minute", Value = tostring(webhookIntervalMin), Callback = function(v)
     webhookIntervalMin = tonumber(v) or webhookIntervalMin
     genv.ftgs_webhookIntervalMin = webhookIntervalMin
     saveConfig()
 end })
 SettingsTab:Button({ Title = "Test Webhook", Icon = "send", Callback = function()
     if webhookUrl == "" then hubNotify("Webhook", "Paste Webhook URL first") return end
-    if sendWebhook() then hubNotify("Webhook", "Sent OK") else hubNotify("Webhook", "Send failed — check URL / executor") end
+    if sendWebhook() then hubNotify("Webhook", "webhook work!") else hubNotify("Webhook", "Send failed — check URL / executor") end
 end })
 SettingsTab:Section({ Title = "Webhook Pet & Shop" })
 SettingsTab:Input({ Title = "Webhook URL Pet & Shop", Value = webhookPetShopUrl, Placeholder = "optional discord webhook", Callback = function(v)
@@ -5743,23 +5743,23 @@ SettingsTab:Input({ Title = "Webhook URL Pet & Shop", Value = webhookPetShopUrl,
     genv.ftgs_webhookPetShopUrl = webhookPetShopUrl
     saveConfig()
 end })
-SettingsTab:Button({ Title = "Test Webhook Pet & Shop", Icon = "send", Callback = function()
+SettingsTab:Button({ Title = "Test Webhook", Icon = "send", Callback = function()
     if webhookPetShopUrl == "" then hubNotify("Pet & Shop", "Paste webhook URL first") return end
-    if sendPetShopWebhook() then hubNotify("Pet & Shop", "Sent OK") else hubNotify("Pet & Shop", "Send failed") end
+    if sendPetShopWebhook() then hubNotify("Pet & Shop", "Sent work!") else hubNotify("Pet & Shop", "Send failed") end
 end })
 SettingsTab:Button({ Title = "Redeem TEAMGREENBEAN", Icon = "gift", Callback = function()
     safeNetCall(Net.Settings and Net.Settings.SubmitCode, "TEAMGREENBEAN")
 end })
 SettingsTab:Slider({ Title = "Walk Speed", Step = 1, Value = { Min = 16, Max = 250, Default = 16 }, Callback = function(v) desiredWalkSpeed = v applyMovement() end })
 SettingsTab:Slider({ Title = "Jump Power", Step = 1, Value = { Min = 50, Max = 500, Default = 50 }, Callback = function(v) desiredJumpPower = v applyMovement() end })
-makeToggle(SettingsTab, "Bypass Movement AC", "Client velocity + anti snap (high walkspeed)", "ftgs_BypassMovement")
-SettingsTab:Toggle({ Title = "Anti Hit", Desc = "Dampen shovel knockback (BodyVelocity)", Default = genv.ftgs_AntiHit or false, Callback = function(s)
+makeToggle(SettingsTab, "Bypass Movement AC", "bypass detected movement anti cheat", "ftgs_BypassMovement")
+SettingsTab:Toggle({ Title = "Anti Hit", Desc = "no knockback if someone hit you", Default = genv.ftgs_AntiHit or false, Callback = function(s)
     genv.ftgs_AntiHit = s
     if s and LocalPlayer.Character then setupAntiKnockbackChar(LocalPlayer.Character) end
 end })
 SettingsTab:Section({ Title = "Visual" })
-SettingsTab:Toggle({ Title = "Fullbright", Desc = "Night looks like day", Default = genv.ftgs_Fullbright or false, Callback = function(s) setFullbright(s) end })
-SettingsTab:Toggle({ Title = "Fruit ESP", Desc = "Top 10 highest value fruits (all gardens)", Default = genv.ftgs_FruitESP == true, Callback = function(s)
+SettingsTab:Toggle({ Title = "Fullbright", Desc = "night vision", Default = genv.ftgs_Fullbright or false, Callback = function(s) setFullbright(s) end })
+SettingsTab:Toggle({ Title = "Fruit ESP", Desc = "10 value fruit in every garden", Default = genv.ftgs_FruitESP == true, Callback = function(s)
     genv.ftgs_FruitESP = s
     saveConfig()
     if not s then clearFruitEsp() end
@@ -5778,25 +5778,25 @@ SettingsTab:Input({ Title = "Visual Money", Value = (visualMoneyAmount and visua
     applyVisualMoney()
     saveConfig()
 end })
-SettingsTab:Toggle({ Title = "Fix Lag", Desc = "Prune bad connections + cleanup stray effects", Default = genv.ftgs_FixLag or false, Callback = function(s) setFixLag(s) end })
+SettingsTab:Toggle({ Title = "Fix Lag", Desc = "fix if your game is lagging", Default = genv.ftgs_FixLag or false, Callback = function(s) setFixLag(s) end })
 SettingsTab:Section({ Title = "Auto Execute" })
 SettingsTab:Input({ Title = "Script URL (optional)", Value = genv.NTMT_SCRIPT_URL or "", Placeholder = "raw github link if no readfile", Callback = function(v)
     genv.NTMT_SCRIPT_URL = v or ""
     saveConfig()
     cacheScriptSourceForAutoExec()
 end })
-SettingsTab:Toggle({ Title = "Auto Execute", Desc = "Re-run script after rejoin/teleport", Default = genv.ftgs_AutoExecute or false, Callback = function(s)
+SettingsTab:Toggle({ Title = "Auto Execute", Desc = "auto turn on script", Default = genv.ftgs_AutoExecute or false, Callback = function(s)
     genv.ftgs_AutoExecute = s
     saveConfig()
     cacheScriptSourceForAutoExec()
 end })
 SettingsTab:Section({ Title = "UI Language (1 click)" })
-SettingsTab:Dropdown({ Title = "Language", Desc = "Instant translate NTMT Hub UI only", Values = TRANSLATE_LANG_NAMES, Value = translateLanguage, Callback = function(v)
+SettingsTab:Dropdown({ Title = "Language", Desc = "select language you want to translate to", Values = TRANSLATE_LANG_NAMES, Value = translateLanguage, Callback = function(v)
     if type(v) == "table" then v = v[1] end
     applyUiLanguage(v or translateLanguage)
 end })
 SettingsTab:Section({ Title = "Fake Lag" })
-SettingsTab:Toggle({ Title = "Fake Lag", Desc = "You move normal — others see 2s delayed position", Default = genv.ftgs_FakeLag or false, Callback = function(s)
+SettingsTab:Toggle({ Title = "Fake Lag", Desc = "make it seem like you lagging but you are not", Default = genv.ftgs_FakeLag or false, Callback = function(s)
     setFakeLag(s, 2)
     saveConfig()
 end })
@@ -5815,24 +5815,24 @@ InfoTab:Paragraph({ Title = "Made by", Desc = MADE_BY })
 end
 
 KeyTab = Window:Tab({ Title = "Key", Icon = "key" })
-KeyTab:Section({ Title = "Unlock NTMT HUB" })
+KeyTab:Section({ Title = "NEED KEY TO USE SCRIPT" })
 KeyTab:Paragraph({
-    Title = "License Key",
-    Desc = "Get your free key from Discord → paste below → Check Key.",
+    Title = "how to get key",
+    Desc = "click get key and join our discord.",
 })
 hubKeyInputEl = KeyTab:Input({
     Title = "Enter Key",
     Value = "",
-    Placeholder = "paste key from Discord",
+    Placeholder = "paste key here",
     Callback = function(v) hubKeyDraft = v or "" end,
 })
 KeyTab:Button({
-    Title = "Check Key (1 click)",
+    Title = "Check Key",
     Icon = "key",
     Callback = function() tryUnlockHubKey(getHubKeyInputText()) end,
 })
 KeyTab:Button({
-    Title = "Get Key (1 click)",
+    Title = "Get Key",
     Icon = "copy",
     Callback = function() copyDiscordForKey() end,
 })
@@ -6100,7 +6100,7 @@ print("[NTMT HUB v6.9] Loaded | " .. Executor)
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
         Title = "NTMT HUB",
-        Text = "Loaded! Tap NTMT HUB (left side)",
+        Text = "NTMT HUB LOADED",
         Duration = 6,
     })
 end)
@@ -6121,8 +6121,8 @@ task.defer(function()
         warn("========================================")
         pcall(function()
             game:GetService("StarterGui"):SetCore("SendNotification", {
-                Title = "NTMT HUB Error",
-                Text = "Open F9 console for details",
+                Title = "error",
+                Text = "report to @58g6 in discord",
                 Duration = 12,
             })
         end)
