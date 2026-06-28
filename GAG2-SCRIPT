@@ -1,5 +1,5 @@
---[[ NTMT HUB - Grow a Garden 2 v6.9 | made by nguoitinhmuathu ]]
-print("[NTMT HUB] BOOT v6.9")
+--[[ NTMT HUB - Grow a Garden 2 v1 | made by nguoitinhmuathu ]]
+print("[NTMT HUB] BOOT v1")
 
 pcall(function()
     if delfile and isfile then
@@ -13,8 +13,12 @@ pcall(function()
     end
 end)
 
-local DISCORD_LINK = "https://discord.gg/your-invite"
-local MADE_BY = "nguoitinhmuathu"
+------------------------------------------------------------
+-- KEY + DISCORD (edit here)
+------------------------------------------------------------
+local HUB_LICENSE_KEY = "NTMT-HUB-KEY-FREE-TRIALS"
+local DISCORD_LINK = "https://discord.gg/VX4rBQyDKJ"
+local MADE_BY = "nguoitinhmuathu | @58g6"
 
 local genv = _G
 if type(getgenv) == "function" then
@@ -829,7 +833,6 @@ genv.ftgs_FruitESP = false
 genv.ftgs_AutoHarvestBest = false
 autoClickSpeed = 0.04
 hubKeyUnlocked, hubTabsBuilt, hubKeyDraft = false, false, ""
-HUB_KEY_SIG = 887716579
 weatherPredictPara, weatherLivePara = nil, nil
 FAVORITE_TICK = 0.01
 visualMoneyBackup = nil
@@ -2029,7 +2032,7 @@ function saveConfig()
             privateServerCode = privateServerCode,
             selectedStealFruits = selectedStealFruits,
             scriptUrl = genv.NTMT_SCRIPT_URL or "",
-            hubKeySig = hubKeyUnlocked and HUB_KEY_SIG or nil,
+            hubKeyUnlocked = hubKeyUnlocked == true,
         }))
     end, noopErr)
 end
@@ -2074,7 +2077,7 @@ function loadConfig()
         end
     end
     if type(data.scriptUrl) == "string" and data.scriptUrl ~= "" then genv.NTMT_SCRIPT_URL = data.scriptUrl end
-    if tonumber(data.hubKeySig) == HUB_KEY_SIG then hubKeyUnlocked = true end
+    if data.hubKeyUnlocked == true then hubKeyUnlocked = true end
     totalPlaySeconds = tonumber(data.totalPlaySeconds) or totalPlaySeconds
     sessionStart = os.time()
 end
@@ -5477,18 +5480,15 @@ function applyUITheme(name)
     saveConfig()
 end
 
-function hubKeySignature(key)
-    if type(key) ~= "string" then return 0 end
-    key = string.upper((key:gsub("%s+", "")))
-    local h = 5381
-    for i = 1, #key do
-        h = (h * 33 + string.byte(key, i)) % 4294967296
-    end
-    return h
+function normalizeHubKeyInput(key)
+    if type(key) ~= "string" then return "" end
+    return (key:match("^%s*(.-)%s*$") or ""):upper()
 end
 
 function verifyHubKey(key)
-    return hubKeySignature(key) == HUB_KEY_SIG
+    local entered = normalizeHubKeyInput(key)
+    local expected = normalizeHubKeyInput(HUB_LICENSE_KEY)
+    return #expected > 0 and entered == expected
 end
 
 function copyDiscordForKey()
