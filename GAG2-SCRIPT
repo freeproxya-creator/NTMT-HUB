@@ -819,7 +819,6 @@ genv.ftgs_AutoExpand = false
 genv.ftgs_AutoCollectDrops = false
 genv.ftgs_AutoCollectMutation = false
 genv.ftgs_AutoBuyPet = false
-genv.ftgs_AutoDefendPet = false
 genv.ftgs_AutoFavoriteSelect = false
 genv.ftgs_AutoUnfavoriteSelect = false
 genv.ftgs_AutoFavoriteAll = false
@@ -829,6 +828,8 @@ genv.ftgs_Fullbright = false
 genv.ftgs_FruitESP = false
 genv.ftgs_AutoHarvestBest = false
 autoClickSpeed = 0.04
+hubKeyUnlocked, hubTabsBuilt, hubKeyDraft = false, false, ""
+HUB_KEY_SIG = 887716579
 weatherPredictPara, weatherLivePara = nil, nil
 FAVORITE_TICK = 0.01
 visualMoneyBackup = nil
@@ -2028,6 +2029,7 @@ function saveConfig()
             privateServerCode = privateServerCode,
             selectedStealFruits = selectedStealFruits,
             scriptUrl = genv.NTMT_SCRIPT_URL or "",
+            hubKeySig = hubKeyUnlocked and HUB_KEY_SIG or nil,
         }))
     end, noopErr)
 end
@@ -2072,6 +2074,7 @@ function loadConfig()
         end
     end
     if type(data.scriptUrl) == "string" and data.scriptUrl ~= "" then genv.NTMT_SCRIPT_URL = data.scriptUrl end
+    if tonumber(data.hubKeySig) == HUB_KEY_SIG then hubKeyUnlocked = true end
     totalPlaySeconds = tonumber(data.totalPlaySeconds) or totalPlaySeconds
     sessionStart = os.time()
 end
@@ -2398,7 +2401,7 @@ function handleToggleOff(key)
     elseif key == "ftgs_FakeLag" then setFakeLag(false)
     elseif key == "ftgs_FruitESP" then clearFruitEsp()
     elseif key == "ftgs_Fullbright" then setFullbright(false)
-    elseif key == "ftgs_AutoBuyPet" or key == "ftgs_AutoDefendPet" then
+    elseif key == "ftgs_AutoBuyPet" then
         isCatchingPet = false
         activeDefendPetPos = nil
         movementBypass = false
@@ -2552,11 +2555,6 @@ function findShovelTool()
     return scan(LocalPlayer.Character) or scan(LocalPlayer:FindFirstChild("Backpack"))
 end
 
-function shouldDefendPetAt(pos)
-    if not genv.ftgs_AutoDefendPet or not pos or not isCatchingPet then return false end
-    return #getPlayersNearPosition(pos, PET_DEFEND_RADIUS) > 0
-end
-
 function hitPlayerWithShovel(targetPlr, shovelTool)
     if not targetPlr or not targetPlr.Character then return end
     local hum = getHumanoid()
@@ -2583,26 +2581,6 @@ function hitPlayerWithShovel(targetPlr, shovelTool)
     safeNetCall(Net.Shovel and Net.Shovel.HitPlayer, targetPlr.UserId, shovel)
     safeNetCall(Net.Actions and Net.Actions.ShovelHit, targetPlr)
     if hum and wasStand and isCatchingPet then hum.PlatformStand = true end
-end
-
-function attackNearbyIntruders(petPos)
-    if not genv.ftgs_AutoDefendPet or not petPos then return false end
-    local intruders = getPlayersNearPosition(petPos, PET_DEFEND_RADIUS)
-    if #intruders == 0 then return false end
-    local shovel = select(1, findShovelTool()) or select(1, findGearTool("Shovel", { "Advanced Shovel", "Common Shovel" }))
-    for _, target in intruders do
-        local thrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-        if thrp then
-            tpInstant(thrp.Position + (thrp.CFrame.LookVector * -4))
-            task.wait(0.04)
-        end
-        if shovel then equipTool(shovel) end
-        sendAutoClick(14)
-        hitPlayerWithShovel(target, shovel)
-        task.wait(0.03)
-    end
-    if isCatchingPet then stickToPosition(petPos) end
-    return true
 end
 
 function getWildPetPosition(pick)
@@ -3906,9 +3884,7 @@ function tryBuyPet()
                 activeDefendPetPos = pos
                 stickToPosition(pos)
                 local intruders = getPlayersNearPosition(pos, PET_DEFEND_RADIUS)
-                if #intruders > 0 and genv.ftgs_AutoDefendPet then
-                    attackNearbyIntruders(pos)
-                elseif #intruders > 0 then
+                if #intruders > 0 then
                     for _, target in intruders do
                         local thrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
                         if thrp then
@@ -4242,46 +4218,24 @@ function buildGearShopPredictText()
 end
 
 function buildSeedShopText()
-    local sp = SHOP_PREDICT
     local lines = {}
-    if sp and type(sp.seeds) == "table" then
-        for _, item in ipairs(sp.seeds) do
-            local gameName = resolveGameSeedName(item.name)
-            local amt = 0
-            local ch = StockItems:FindFirstChild(gameName)
-            if ch and ch:IsA("ValueBase") then amt = ch.Value end
-            lines[#lines + 1] = formatShopStockLine(item.name, amt, getSeedPrice(gameName))
+    for _, ch in ipairs(StockItems:GetChildren()) do
+        if ch:IsA("ValueBase") and ch.Value > 0 then
+            lines[#lines + 1] = formatShopStockLine(ch.Name, ch.Value, getSeedPrice(ch.Name))
         end
-    else
-        for _, ch in ipairs(StockItems:GetChildren()) do
-            if ch:IsA("ValueBase") then
-                lines[#lines + 1] = formatShopStockLine(ch.Name, ch.Value, getSeedPrice(ch.Name))
-            end
-        end
-        table.sort(lines)
     end
+    table.sort(lines)
     return #lines > 0 and table.concat(lines, "\n") or "Waiting restock..."
 end
 
 function buildGearShopText()
-    local sp = SHOP_PREDICT
     local lines = {}
-    if sp and type(sp.gears) == "table" then
-        for _, item in ipairs(sp.gears) do
-            local gameName = resolveGameGearName(item.name)
-            local amt = 0
-            local ch = GearStockItems:FindFirstChild(gameName)
-            if ch and ch:IsA("ValueBase") then amt = ch.Value end
-            lines[#lines + 1] = formatShopStockLine(item.name, amt, getGearPrice(gameName))
+    for _, ch in ipairs(GearStockItems:GetChildren()) do
+        if ch:IsA("ValueBase") and ch.Value > 0 then
+            lines[#lines + 1] = formatShopStockLine(ch.Name, ch.Value, getGearPrice(ch.Name))
         end
-    else
-        for _, ch in ipairs(GearStockItems:GetChildren()) do
-            if ch:IsA("ValueBase") then
-                lines[#lines + 1] = formatShopStockLine(ch.Name, ch.Value, getGearPrice(ch.Name))
-            end
-        end
-        table.sort(lines)
     end
+    table.sort(lines)
     return #lines > 0 and table.concat(lines, "\n") or "Waiting restock..."
 end
 
@@ -5523,6 +5477,43 @@ function applyUITheme(name)
     saveConfig()
 end
 
+function hubKeySignature(key)
+    if type(key) ~= "string" then return 0 end
+    key = string.upper((key:gsub("%s+", "")))
+    local h = 5381
+    for i = 1, #key do
+        h = (h * 33 + string.byte(key, i)) % 4294967296
+    end
+    return h
+end
+
+function verifyHubKey(key)
+    return hubKeySignature(key) == HUB_KEY_SIG
+end
+
+function copyDiscordForKey()
+    if setclipboard then xpcall(setclipboard, noopErr, DISCORD_LINK) end
+    hubNotify("Get Key", "Discord link copied — join and grab your free key!")
+end
+
+function tryUnlockHubKey(key)
+    if hubKeyUnlocked then
+        hubNotify("Key", "Already unlocked!")
+        return true
+    end
+    if not verifyHubKey(key) then
+        hubNotify("Key", "Invalid key — use Get Key and join Discord")
+        return false
+    end
+    hubKeyUnlocked = true
+    saveConfig()
+    buildHubMainTabs()
+    if genv.ftgs_FixLag then startFixLag() end
+    if genv.ftgs_FakeLag then setFakeLag(true, 2) end
+    hubNotify("Key", "Unlocked! All tabs are ready.")
+    return true
+end
+
 -- ===== WINDUI =====
 
 Window = WindUI:CreateWindow({
@@ -5562,6 +5553,10 @@ function multiDropdown(tab, title, values, selected, allowNone)
         Callback = function(sel) parseMultiSelect(sel, selected) end,
     })
 end
+
+function buildHubMainTabs()
+    if hubTabsBuilt then return end
+    hubTabsBuilt = true
 
 MainTab = Window:Tab({ Title = "Main", Icon = "home" })
 MainTab:Section({ Title = "Farm" })
@@ -5628,8 +5623,7 @@ makeToggle(AutoTab, "Auto Plant", "Remote plant — skip garden center", "ftgs_A
 multiDropdown(AutoTab, "Plant Seeds", PlantSeedNames, selectedPlantSeeds, false)
 makeToggle(AutoTab, "Auto Shovel", "Remove selected seed plants (batch)", "ftgs_AutoShovel")
 multiDropdown(AutoTab, "Shovel Seeds", SeedNames, selectedShovelSeeds, false)
-makeToggle(AutoTab, "Auto Buy Pet", "Follow pet + tame + defend", "ftgs_AutoBuyPet")
-makeToggle(AutoTab, "Auto Defend Pet", "Shovel intruders only while taming pet", "ftgs_AutoDefendPet")
+makeToggle(AutoTab, "Auto Buy Pet", "Follow pet + tame", "ftgs_AutoBuyPet")
 multiDropdown(AutoTab, "Select Pets", PET_LIST, selectedPets, false)
 
 ShopTab = Window:Tab({ Title = "Shop", Icon = "shopping-cart" })
@@ -5773,6 +5767,43 @@ InfoTab:Paragraph({ Title = "Roblox User", Desc = LocalPlayer.Name })
 activePara = InfoTab:Paragraph({ Title = "Active", Desc = "0h 00m 00s" })
 InfoTab:Paragraph({ Title = "Made by", Desc = MADE_BY })
 
+end
+
+KeyTab = Window:Tab({ Title = "Key", Icon = "key" })
+KeyTab:Section({ Title = "Unlock NTMT HUB" })
+KeyTab:Paragraph({
+    Title = "License Key",
+    Desc = "Get your free key from Discord → paste below → Check Key.",
+})
+KeyTab:Input({
+    Title = "Enter Key",
+    Value = "",
+    Placeholder = "paste key from Discord",
+    Callback = function(v) hubKeyDraft = v or "" end,
+})
+KeyTab:Button({
+    Title = "Check Key (1 click)",
+    Icon = "key",
+    Callback = function() tryUnlockHubKey(hubKeyDraft) end,
+})
+KeyTab:Button({
+    Title = "Get Key (1 click)",
+    Icon = "copy",
+    Callback = function() copyDiscordForKey() end,
+})
+if hubKeyUnlocked then buildHubMainTabs() end
+
+function waitHubUnlock()
+    while not hubKeyUnlocked do task.wait(0.25) end
+end
+
+function hubLoop(fn)
+    task.spawn(function()
+        waitHubUnlock()
+        fn()
+    end)
+end
+
 -- ===== LOOPS =====
 
 
@@ -5780,58 +5811,58 @@ function safeLoop(fn)
     xpcall(fn, noopErr)
 end
 
-task.spawn(function()
+hubLoop(function()
     while true do if genv.ftgs_AutoHarvest then safeLoop(tryHarvestOne) end task.wait(COOLDOWN.Harvest) end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do if genv.ftgs_AutoHarvestBest then safeLoop(tryHarvestBestOnce) end task.wait(COOLDOWN.Harvest) end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do if genv.ftgs_AutoSell then safeLoop(trySellAll) end task.wait(0.5) end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do if genv.ftgs_AutoSellEverytime then safeLoop(trySellEverytime) end task.wait(0.01) end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoFavoriteSelect then safeLoop(tryFavoriteSelectedOnce) end
         task.wait(FAVORITE_TICK)
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoUnfavoriteSelect then safeLoop(tryUnfavoriteSelectedOnce) end
         task.wait(FAVORITE_TICK)
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoFavoriteAll then safeLoop(tryFavoriteAllOnce) end
         task.wait(FAVORITE_TICK)
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoUnfavoriteAll then safeLoop(tryUnfavoriteAllOnce) end
         task.wait(FAVORITE_TICK)
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoSteal and not stealBusy then safeLoop(tryAutoSteal) end
         task.wait(stealBusy and 0.08 or 0.35)
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoBuySeed or genv.ftgs_AutoBuyAllSeed then safeLoop(tryBuySeedsFast) end
         if genv.ftgs_AutoBuyGear or genv.ftgs_AutoBuyAllGear then safeLoop(tryBuyGearsFast) end
@@ -5839,32 +5870,32 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do if genv.ftgs_AutoBuyPet then safeLoop(tryBuyPet) end task.wait(0.08) end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoCollectMutation and not collectingMutation then safeLoop(tryCollectMutationSeedsOnce) end
         task.wait(collectingMutation and 0.04 or 0.1)
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoCollectDrops and not dropsBusy then safeLoop(tryCollectDrops) end
         task.wait(0.12)
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoPlant then safeLoop(tryAutoPlant) end
         task.wait(genv.ftgs_AutoPlant and 0.01 or 0.35)
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoShovel then safeLoop(tryShovel) end
         if genv.ftgs_AutoSprinkler then safeLoop(trySprinkler) end
@@ -5875,7 +5906,7 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         safeLoop(refreshOwnerPlot)
         safeLoop(initMapFolders)
@@ -5884,7 +5915,7 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     local function refreshLive()
         xpcall(function()
             if seedShopLive and type(seedShopLive.SetDesc) == "function" then seedShopLive:SetDesc(buildSeedShopText()) end
@@ -5923,7 +5954,7 @@ task.spawn(function()
     while task.wait(2) do refreshLive() end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         xpcall(function()
             if activePara and type(activePara.SetDesc) == "function" then
@@ -5934,29 +5965,21 @@ task.spawn(function()
     end
 end)
 
-Services.RunService.Heartbeat:Connect(function()
-    safeLoop(applyMovement)
-end)
-
-Services.RunService.RenderStepped:Connect(function(dt)
-    safeLoop(function() applyMovementBypass(dt) end)
-end)
-
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AntiStealGuard and not gardenActionLock and not stealBusy then safeLoop(tryAntiStealGuard) end
         task.wait(0.05)
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         safeLoop(updateFruitEsp)
         task.wait(1.2)
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoHop then safeLoop(hopToRandomServer) task.wait(AUTO_HOP_INTERVAL)
         elseif genv.ftgs_AutoJoinPrivate then safeLoop(hopPrivateServerAuto) task.wait(AUTO_HOP_INTERVAL)
@@ -5964,7 +5987,7 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         applyVisualMoney()
         if genv.ftgs_GodMode and LocalPlayer.Character then applyGodMode(LocalPlayer.Character) end
@@ -5972,10 +5995,18 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
+hubLoop(function()
     while true do
         if genv.ftgs_AutoWebhook and webhookUrl ~= "" then sendWebhook() task.wait(math.max(1, webhookIntervalMin) * 60) else task.wait(5) end
     end
+end)
+
+Services.RunService.Heartbeat:Connect(function()
+    safeLoop(applyMovement)
+end)
+
+Services.RunService.RenderStepped:Connect(function(dt)
+    safeLoop(function() if hubKeyUnlocked then applyMovementBypass(dt) end end)
 end)
 
 task.spawn(function()
@@ -6004,8 +6035,8 @@ end
 setupShopRestockWatch()
 cacheScriptSourceForAutoExec()
 setupAutoExecute()
-if genv.ftgs_FixLag then startFixLag() end
-if genv.ftgs_FakeLag then setFakeLag(true, 2) end
+if hubKeyUnlocked and genv.ftgs_FixLag then startFixLag() end
+if hubKeyUnlocked and genv.ftgs_FakeLag then setFakeLag(true, 2) end
 task.defer(function()
     xpcall(setupHubUiTranslationWatcher, noopErr)
 end)
