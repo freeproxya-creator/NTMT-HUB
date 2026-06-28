@@ -3209,12 +3209,36 @@ function trackPetBuy(name, price)
     if e then e.amount += 1 else BoughtPets[name] = { amount = 1, price = price or 0 } end
 end
 
-function isModelGrown(model)
+function coerceHarvestNum(v)
+    if type(v) == "number" then return v end
+    if type(v) == "string" then return tonumber(v) end
+    return nil
+end
+
+function isModelGrown(model, parentPlant)
     if not model then return false end
-    local maxAge = model:GetAttribute("MaxAge")
-    local currentAge = model:GetAttribute("Age")
-    if maxAge == nil or currentAge == nil then return false end
-    return currentAge >= maxAge
+    local maxAge = coerceHarvestNum(model:GetAttribute("MaxAge"))
+    local age = coerceHarvestNum(model:GetAttribute("Age"))
+    if (maxAge == nil or age == nil) and parentPlant then
+        maxAge = maxAge or coerceHarvestNum(parentPlant:GetAttribute("MaxAge"))
+        age = age or coerceHarvestNum(parentPlant:GetAttribute("Age"))
+    end
+    if maxAge ~= nil and age ~= nil then
+        return age >= maxAge
+    end
+    if getStealPrompt(model) then return false end
+    local hp = model:FindFirstChild("HarvestPart")
+    if hp and hp:FindFirstChildWhichIsA("ProximityPrompt") then return true end
+    for _, desc in model:GetDescendants() do
+        if desc:IsA("ProximityPrompt") then
+            local action = string.lower(desc.ActionText or "")
+            if action:find("steal") then return false end
+            if action:find("harvest") or action:find("collect") or action:find("pick") or action:find("grab") then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 function isDataReady(data)
@@ -3225,88 +3249,181 @@ function isDataReady(data)
 end
 
 function isPhysicalFruitRipe(fruit, plant)
-    return isModelGrown(fruit) or (not fruit and plant and isModelGrown(plant))
+    return isModelGrown(fruit, plant)
 end
 
-function getHarvestPlantId(plantModel, fruitModel)
-    if fruitModel then
-        return fruitModel:GetAttribute("PlantId")
-            or fruitModel:GetAttribute("PlantID")
-            or (plantModel and (plantModel:GetAttribute("PlantId") or plantModel:GetAttribute("PlantID")))
-            or (plantModel and plantModel.Name)
+function resolveHarvestIds(plantModel, fruitModel)
+    local target = fruitModel or plantModel
+    if not target then return nil, "" end
+    local plantId = target:GetAttribute("PlantId") or target:GetAttribute("PlantID")
+    if not plantId and fruitModel and plantModel then
+        plantId = plantModel:GetAttribute("PlantId") or plantModel:GetAttribute("PlantID")
     end
-    return (plantModel and (plantModel:GetAttribute("PlantId") or plantModel:GetAttribute("PlantID") or plantModel.Name))
+    local fruitId = ""
+    if fruitModel then
+        fruitId = fruitModel:GetAttribute("FruitId") or fruitModel:GetAttribute("FruitID") or ""
+    end
+    return plantId, fruitId
 end
 
-function getHarvestFruitId(fruitModel)
-    if not fruitModel then return "" end
-    return fruitModel:GetAttribute("FruitId") or fruitModel:GetAttribute("FruitID") or ""
+function getHarvestSeedName(entry)
+    if entry.model then
+        return entry.model:GetAttribute("CorePartName")
+            or entry.model:GetAttribute("PlantName")
+            or entry.model:GetAttribute("FruitName")
+            or (entry.plantModel and (entry.plantModel:GetAttribute("PlantName") or entry.plantModel:GetAttribute("SeedName")))
+    end
+    local plantData = trackedPlants[entry.plantId]
+    if type(plantData) ~= "table" then return nil end
+    local fruitData = (entry.fruitId ~= "" and plantData.Fruits and plantData.Fruits[entry.fruitId]) or nil
+    return getHarvestPlantName(plantData, fruitData)
 end
 
-function getHarvestableFromPlot()
+function collectHarvestEntriesFromPlot()
     refreshOwnerPlot()
-    local out = {}
+    local out, seen = {}, {}
+    local function push(model, plantModel, plantId, fruitId, replica)
+        if plantId == nil or plantId == "" then return end
+        local key = tostring(plantId) .. "|" .. tostring(fruitId or "")
+        if seen[key] then return end
+        seen[key] = true
+        out[#out + 1] = {
+            model = model,
+            plantModel = plantModel,
+            plantId = plantId,
+            fruitId = fruitId or "",
+            replica = replica == true,
+        }
+    end
     local pf = OwnerPlot and OwnerPlot:FindFirstChild("Plants")
-    if not pf then return out end
-    for _, plant in pf:GetChildren() do
-        local fruitsFolder = plant:FindFirstChild("Fruits")
-        if fruitsFolder then
-            for _, fruit in fruitsFolder:GetChildren() do
-                if fruit:IsA("Model") and isModelGrown(fruit) then
-                    out[#out + 1] = {
-                        model = fruit,
-                        plantModel = plant,
-                        plantId = getHarvestPlantId(plant, fruit),
-                        fruitId = getHarvestFruitId(fruit),
-                    }
+    if pf then
+        for _, plant in pf:GetChildren() do
+            local fruitsFolder = plant:FindFirstChild("Fruits")
+            if fruitsFolder then
+                for _, fruit in fruitsFolder:GetChildren() do
+                    if (fruit:IsA("Model") or fruit:IsA("BasePart")) and isModelGrown(fruit, plant) then
+                        local plantId, fruitId = resolveHarvestIds(plant, fruit)
+                        push(fruit, plant, plantId, fruitId, false)
+                    end
+                end
+            elseif isModelGrown(plant, nil) then
+                local plantId, fruitId = resolveHarvestIds(plant, nil)
+                push(plant, plant, plantId, fruitId, false)
+            end
+        end
+    end
+    for plantId, plantData in pairs(trackedPlants) do
+        if type(plantData) ~= "table" then continue end
+        local fruits = plantData.Fruits
+        if type(fruits) == "table" then
+            for fruitId, fruitData in pairs(fruits) do
+                if isDataReady(fruitData) then
+                    push(nil, nil, plantId, fruitId, true)
                 end
             end
-        elseif plant:IsA("Model") and isModelGrown(plant) then
-            out[#out + 1] = {
-                model = plant,
-                plantModel = plant,
-                plantId = getHarvestPlantId(plant, nil),
-                fruitId = "",
-            }
+        end
+        if isDataReady(plantData) then
+            push(nil, nil, plantId, "", true)
         end
     end
     return out
 end
 
 function shouldHarvestModelEntry(entry)
-    if not entry or not entry.plantId then return false end
-    local fruit = entry.model
-    local plant = entry.plantModel
-    local seedName = getFruitStealName(fruit)
-        or (plant and (plant:GetAttribute("PlantName") or plant:GetAttribute("SeedName")))
+    if not entry or entry.plantId == nil or entry.plantId == "" then return false end
+    local seedName = getHarvestSeedName(entry)
     if setHasAny(exceptHarvestPlants) and seedName and seedInSet(exceptHarvestPlants, seedName) then
         return false
     end
     if setHasAny(collectOnlyPlants) and (not seedName or not seedInSet(collectOnlyPlants, seedName)) then
         return false
     end
-    if harvestMaxWeight > 0 and fruit then
-        local w = fruit:GetAttribute("Weight") or fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("Age")
+    if harvestMaxWeight > 0 then
+        local w
+        if entry.model then
+            w = entry.model:GetAttribute("Weight") or entry.model:GetAttribute("SizeMulti") or entry.model:GetAttribute("Age")
+        elseif entry.fruitId ~= "" then
+            local plantData = trackedPlants[entry.plantId]
+            local fruitData = plantData and plantData.Fruits and plantData.Fruits[entry.fruitId]
+            if type(fruitData) == "table" then w = getFruitWeightKg(fruitData) end
+        end
         if type(w) == "number" and w > harvestMaxWeight then return false end
     end
     return true
 end
 
 function harvestFruitRemote(plantId, fruitId)
-    if not plantId then return false end
-    return safeNetCall(Net.Garden and Net.Garden.CollectFruit, plantId, fruitId or "")
+    if plantId == nil or plantId == "" then return false end
+    fruitId = fruitId or ""
+    local remote = Net and Net.Garden and Net.Garden.CollectFruit
+    if not remote then return false end
+    if type(remote.Fire) == "function" then
+        local ok = pcall(function() remote:Fire(plantId, fruitId) end)
+        if ok then return true end
+    end
+    if type(remote.FireServer) == "function" then
+        local ok = pcall(function() remote:FireServer(plantId, fruitId) end)
+        if ok then return true end
+    end
+    return safeNetCall(remote, plantId, fruitId)
+end
+
+function fireOwnGardenHarvestPrompt(model)
+    if not model then return false end
+    for _, desc in model:GetDescendants() do
+        if desc:IsA("ProximityPrompt") then
+            local action = string.lower(desc.ActionText or "")
+            if not action:find("steal") then
+                if fireproximityprompt then
+                    pcall(function() fireproximityprompt(desc, 1) end)
+                    return true
+                end
+                if type(desc.InputHoldBegin) == "function" then
+                    pcall(function() desc:InputHoldBegin() desc:InputHoldEnd() end)
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+function getHarvestEntryValue(entry)
+    if entry.model then
+        return calculateStealValue(entry.model)
+    end
+    local plantData = trackedPlants[entry.plantId]
+    if type(plantData) ~= "table" then return 0 end
+    local fruitData = (entry.fruitId ~= "" and plantData.Fruits and plantData.Fruits[entry.fruitId]) or plantData
+    local ok, val = xpcall(
+        FruitValueCalc,
+        noopErr,
+        getPlantSeedName(fruitData),
+        fruitData.SizeMulti or fruitData.Age,
+        fruitData.Mutation,
+        LocalPlayer,
+        1
+    )
+    return ok and val or 0
+end
+
+function tryHarvestEntry(entry)
+    if harvestFruitRemote(entry.plantId, entry.fruitId) then return true end
+    if entry.model then return fireOwnGardenHarvestPrompt(entry.model) end
+    return false
 end
 
 function findBestHarvestableInGarden()
     local best
-    for _, entry in ipairs(getHarvestableFromPlot()) do
+    for _, entry in ipairs(collectHarvestEntriesFromPlot()) do
         if shouldHarvestModelEntry(entry) then
-            local val = calculateStealValue(entry.model)
+            local val = getHarvestEntryValue(entry)
             if not best or val > best.value then
                 best = {
                     plantId = entry.plantId,
                     fruitId = entry.fruitId,
                     value = val,
+                    entry = entry,
                 }
             end
         end
@@ -3318,16 +3435,20 @@ function tryHarvestBestOnce()
     if not genv.ftgs_AutoHarvestBest then return end
     local best = findBestHarvestableInGarden()
     if not best then return end
-    harvestFruitRemote(best.plantId, best.fruitId)
+    tryHarvestEntry(best.entry or best)
 end
 
 function tryHarvestOne()
     if not genv.ftgs_AutoHarvest then return end
-    for _, entry in ipairs(getHarvestableFromPlot()) do
+    local entries = collectHarvestEntriesFromPlot()
+    for _, entry in ipairs(entries) do
         if shouldHarvestModelEntry(entry) then
-            harvestFruitRemote(entry.plantId, entry.fruitId)
+            tryHarvestEntry(entry)
             return
         end
+    end
+    if #entries == 0 then
+        safeNetCall(Net.Garden and Net.Garden.RequestGardens)
     end
 end
 
@@ -5887,15 +6008,16 @@ function safeLoop(fn)
     xpcall(fn, noopErr)
 end
 
-hubLoop(function()
+-- Harvest loops run immediately (no key wait) so farm always works when toggled on
+task.spawn(function()
     while true do if genv.ftgs_AutoHarvest then safeLoop(tryHarvestOne) end task.wait(COOLDOWN.Harvest) end
 end)
 
-hubLoop(function()
+task.spawn(function()
     while true do if genv.ftgs_AutoHarvestBest then safeLoop(tryHarvestBestOnce) end task.wait(COOLDOWN.Harvest) end
 end)
 
-hubLoop(function()
+hubLoop(function())
     while true do if genv.ftgs_AutoSell then safeLoop(trySellAll) end task.wait(0.5) end
 end)
 
