@@ -829,7 +829,8 @@ genv.ftgs_Fullbright = false
 genv.ftgs_FruitESP = false
 genv.ftgs_AutoHarvestBest = false
 autoClickSpeed = 0.04
-moonPredictGui = nil
+weatherPredictPara, weatherLivePara = nil, nil
+FAVORITE_TICK = 0.01
 visualMoneyBackup = nil
 MOON_WEATHER_CLEN = 600
 MOON_WEATHER_START_CYCLE = 2970230
@@ -1975,7 +1976,10 @@ hitboxOriginalProps, defendHitboxActive = {}, false
 translateLanguage = "English"
 translationRegistry, translationCache = {}, {}
 hubScreenGuis = {}
-fpsBoosterConn, fpsBoosterRestore = nil, nil
+fpsBoosterConn, fpsBoosterRestore, fixLagMainConn = nil, nil, nil
+FIX_LAG_CHECK_INTERVAL = 10
+FIX_LAG_MAX_CONNECTIONS = 100
+FIX_LAG_EFFECT_CLEANUP = 5
 autoExecuteQueued = false
 
 BoughtSeeds, BoughtGears, BoughtPets = {}, {}, {}
@@ -2316,35 +2320,32 @@ function fireFavoriteRemote(remote, fruitId, wantFavorite)
     return false
 end
 
+function markFruitFavoriteState(entry, wantFavorite)
+    if type(entry) ~= "table" then return end
+    entry.Favorite = wantFavorite
+    entry.IsFavorite = wantFavorite
+    entry.Favorited = wantFavorite
+    entry.Starred = wantFavorite
+end
+
 function setFruitFavoriteById(fruitId, entry, wantFavorite)
     initFavoriteRemotes()
     if fruitId == nil then return false end
     if entry and isFruitFavorited(entry) == wantFavorite then return false end
+    if favoriteRemote and fireFavoriteRemote(favoriteRemote, fruitId, wantFavorite) then
+        markFruitFavoriteState(entry, wantFavorite)
+        return true
+    end
     for _, info in scanNetFavoriteRemotes() do
         if fireFavoriteRemote(info.remote, fruitId, wantFavorite) then
             favoriteRemote = info.remote
             favoriteRemotePath = info.path
-            if type(entry) == "table" then
-                entry.Favorite = wantFavorite
-                entry.IsFavorite = wantFavorite
-                entry.Favorited = wantFavorite
-            end
+            markFruitFavoriteState(entry, wantFavorite)
             return true
         end
     end
-    if favoriteRemote and fireFavoriteRemote(favoriteRemote, fruitId, wantFavorite) then
-        if type(entry) == "table" then
-            entry.Favorite = wantFavorite
-            entry.IsFavorite = wantFavorite
-        end
-        return true
-    end
-    if type(entry) == "table" then
-        entry.Favorite = wantFavorite
-        entry.IsFavorite = wantFavorite
-        entry.Favorited = wantFavorite
-    end
-    return false
+    markFruitFavoriteState(entry, wantFavorite)
+    return true
 end
 
 function fruitEntryMatchesSelect(entry, fruitName)
@@ -4144,7 +4145,29 @@ function formatPlayTimeCompact(totalSec)
 end
 
 function formatShopStockLine(name, amount, price)
-    return string.format("%s x%d %s coin", string.lower(tostring(name)), tonumber(amount) or 0, formatCompactNumber(price))
+    return string.format("%s | x%d | %s", shopPredictDisplayName(name), tonumber(amount) or 0, formatCompactNumber(price))
+end
+
+function resolveGameSeedName(displayName)
+    local map = {
+        ["Green Bean"] = "GreenBean",
+        ["Dragon Fruit"] = "DragonFruit",
+        ["Venus Fly Trap"] = "VenusFlyTrap",
+        ["Poison Apple"] = "PoisonApple",
+        ["Moon Bloom"] = "MoonBloom",
+        ["Dragon's Breath"] = "DragonBreath",
+        ["Venom Spitter"] = "VenomSpitter",
+    }
+    if map[displayName] then return map[displayName] end
+    if StockItems:FindFirstChild(displayName) then return displayName end
+    local compact = tostring(displayName):gsub("'", ""):gsub(" ", "")
+    if StockItems:FindFirstChild(compact) then return compact end
+    return compact
+end
+
+function resolveGameGearName(displayName)
+    if GearStockItems:FindFirstChild(displayName) then return displayName end
+    return tostring(displayName)
 end
 
 function formatEtaLong(sec)
@@ -4188,15 +4211,12 @@ end
 function buildShopPredictLine(item, anchor, period, count, nowT)
     local ev = evalShopPredictItem(item, anchor, period, count, nowT)
     local qty, eta = 0, nil
-    if ev.cur then
-        qty = ev.cur.q
-        if ev.nxt then eta = ev.nxt.t - nowT end
-    elseif ev.nxt then
+    if ev.nxt then
         qty = ev.nxt.q
-        eta = ev.nxt.t - nowT
+        eta = math.max(0, ev.nxt.t - nowT)
     end
     local etaStr = eta and formatEtaLong(eta) or "—"
-    return string.format("%s x%d %s %s", shopPredictDisplayName(item.name), qty, etaStr, formatCompactNumber(item.price or 0))
+    return string.format("%s | x%d | %s | %s", shopPredictDisplayName(item.name), qty, etaStr, formatCompactNumber(item.price or 0))
 end
 
 function buildSeedShopPredictText()
@@ -4222,24 +4242,46 @@ function buildGearShopPredictText()
 end
 
 function buildSeedShopText()
+    local sp = SHOP_PREDICT
     local lines = {}
-    for _, ch in ipairs(StockItems:GetChildren()) do
-        if ch:IsA("ValueBase") and ch.Value > 0 then
-            lines[#lines + 1] = formatShopStockLine(ch.Name, ch.Value, getSeedPrice(ch.Name))
+    if sp and type(sp.seeds) == "table" then
+        for _, item in ipairs(sp.seeds) do
+            local gameName = resolveGameSeedName(item.name)
+            local amt = 0
+            local ch = StockItems:FindFirstChild(gameName)
+            if ch and ch:IsA("ValueBase") then amt = ch.Value end
+            lines[#lines + 1] = formatShopStockLine(item.name, amt, getSeedPrice(gameName))
         end
+    else
+        for _, ch in ipairs(StockItems:GetChildren()) do
+            if ch:IsA("ValueBase") then
+                lines[#lines + 1] = formatShopStockLine(ch.Name, ch.Value, getSeedPrice(ch.Name))
+            end
+        end
+        table.sort(lines)
     end
-    table.sort(lines)
     return #lines > 0 and table.concat(lines, "\n") or "Waiting restock..."
 end
 
 function buildGearShopText()
+    local sp = SHOP_PREDICT
     local lines = {}
-    for _, ch in ipairs(GearStockItems:GetChildren()) do
-        if ch:IsA("ValueBase") and ch.Value > 0 then
-            lines[#lines + 1] = formatShopStockLine(ch.Name, ch.Value, getGearPrice(ch.Name))
+    if sp and type(sp.gears) == "table" then
+        for _, item in ipairs(sp.gears) do
+            local gameName = resolveGameGearName(item.name)
+            local amt = 0
+            local ch = GearStockItems:FindFirstChild(gameName)
+            if ch and ch:IsA("ValueBase") then amt = ch.Value end
+            lines[#lines + 1] = formatShopStockLine(item.name, amt, getGearPrice(gameName))
         end
+    else
+        for _, ch in ipairs(GearStockItems:GetChildren()) do
+            if ch:IsA("ValueBase") then
+                lines[#lines + 1] = formatShopStockLine(ch.Name, ch.Value, getGearPrice(ch.Name))
+            end
+        end
+        table.sort(lines)
     end
-    table.sort(lines)
     return #lines > 0 and table.concat(lines, "\n") or "Waiting restock..."
 end
 
@@ -4785,115 +4827,65 @@ function setupAutoExecute()
 end
 
 function stopFixLag()
+    if fixLagMainConn then fixLagMainConn:Disconnect() fixLagMainConn = nil end
     if fpsBoosterConn then fpsBoosterConn:Disconnect() fpsBoosterConn = nil end
     if type(fpsBoosterRestore) == "function" then xpcall(fpsBoosterRestore, noopErr) fpsBoosterRestore = nil end
 end
 
+function fixLagDisconnectNonForeign(service, eventName)
+    if type(getconnections) ~= "function" then return end
+    local ok, connections = pcall(getconnections, service[eventName])
+    if not ok or type(connections) ~= "table" then return end
+    for _, c in ipairs(connections) do
+        if c and not c.ForeignState then
+            pcall(function() c:Disconnect() end)
+        end
+    end
+end
+
+function fixLagPruneConnections(service, eventName)
+    if type(getconnections) ~= "function" then return end
+    local ok, connections = pcall(getconnections, service[eventName])
+    if not ok or type(connections) ~= "table" or #connections <= FIX_LAG_MAX_CONNECTIONS then return end
+    for i = #connections, FIX_LAG_MAX_CONNECTIONS + 1, -1 do
+        local c = connections[i]
+        if c and not c.ForeignState then
+            pcall(function() c:Disconnect() end)
+        end
+    end
+end
+
+function fixLagCleanupEffects()
+    local Workspace = Services.Workspace
+    local Debris = Services.Debris
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
+            local hum = obj.Parent and obj.Parent:FindFirstChildOfClass("Humanoid")
+            if not hum then
+                pcall(function() Debris:AddItem(obj, FIX_LAG_EFFECT_CLEANUP) end)
+            end
+        end
+    end
+end
+
 function startFixLag()
     stopFixLag()
-    local Workspace = Services.Workspace
-    local Lighting = Services.Lighting
-    local MaterialService = Services.MaterialService
-    local saved = { lighting = {}, instances = setmetatable({}, { __mode = "k" }) }
-    local queue, qHead, qTail, qSize = {}, 1, 0, 0
-    local function qPush(x) qTail += 1 queue[qTail] = x qSize += 1 end
-    local function qPopBatch(n)
-        local out, count = {}, math.min(n, qSize)
-        for i = 1, count do out[i] = queue[qHead] queue[qHead] = nil qHead += 1 qSize -= 1 end
-        return out
-    end
-    local function ignored(inst)
-        if not inst or (LocalPlayer.Character and inst:IsDescendantOf(LocalPlayer.Character)) then return true end
-        return inst:IsA("Terrain")
-    end
-    local function saveOnce(obj, prop, val)
-        local e = saved.instances[obj] or {}
-        saved.instances[obj] = e
-        if e[prop] == nil then e[prop] = val end
-    end
-    local function optimize(inst)
-        if not inst or ignored(inst) then return end
-        local class = inst.ClassName
-        if class == "ParticleEmitter" or class == "Trail" or class == "Smoke" or class == "Fire" or class == "Sparkles" then
-            if pcall(function() return inst.Enabled end) then saveOnce(inst, "Enabled", inst.Enabled) end
-            pcall(function() inst.Enabled = false end)
-            return
-        end
-        if class == "Beam" then
-            if pcall(function() return inst.Enabled end) then saveOnce(inst, "Enabled", inst.Enabled) end
-            pcall(function() inst.Enabled = false end)
-            return
-        end
-        if inst:IsA("PostEffect") then
-            if pcall(function() return inst.Enabled end) then saveOnce(inst, "Enabled", inst.Enabled) end
-            pcall(function() inst.Enabled = false end)
-            return
-        end
-        if inst:IsA("MeshPart") or inst:IsA("BasePart") then
-            pcall(function()
-                if inst.Material then saveOnce(inst, "Material", inst.Material) inst.Material = Enum.Material.Plastic end
-                if inst.Reflectance then saveOnce(inst, "Reflectance", inst.Reflectance) inst.Reflectance = 0 end
-                if inst.CastShadow ~= nil then saveOnce(inst, "CastShadow", inst.CastShadow) inst.CastShadow = false end
-                if inst.RenderFidelity ~= nil then saveOnce(inst, "RenderFidelity", inst.RenderFidelity) inst.RenderFidelity = 2 end
-            end)
-            return
-        end
-        if inst:IsA("Decal") or inst:IsA("Texture") then
-            pcall(function() saveOnce(inst, "Transparency", inst.Transparency) inst.Transparency = 1 end)
-        end
-    end
-    pcall(function()
-        saved.lighting.GlobalShadows = Lighting.GlobalShadows
-        Lighting.GlobalShadows = false
-        saved.lighting.FogEnd = Lighting.FogEnd
-        Lighting.FogEnd = 9e9
-        local terrain = Workspace:FindFirstChildOfClass("Terrain")
-        if terrain then
-            saved.lighting.Terrain = {
-                WaterWaveSize = terrain.WaterWaveSize,
-                WaterWaveSpeed = terrain.WaterWaveSpeed,
-                WaterReflectance = terrain.WaterReflectance,
-                WaterTransparency = terrain.WaterTransparency,
-            }
-            terrain.WaterWaveSize = 0
-            terrain.WaterWaveSpeed = 0
-            terrain.WaterReflectance = 0
-            terrain.WaterTransparency = 0
-        end
-        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-        pcall(function() MaterialService.Use2022Materials = false end)
+    local RunService = Services.RunService
+    local LogService = Services.LogService
+    local ScriptContext = Services.ScriptContext
+    fixLagDisconnectNonForeign(LogService, "MessageOut")
+    fixLagDisconnectNonForeign(ScriptContext, "Error")
+    fixLagCleanupEffects()
+    local lastCheck = os.clock()
+    fixLagMainConn = RunService.Heartbeat:Connect(function()
+        if os.clock() - lastCheck < FIX_LAG_CHECK_INTERVAL then return end
+        lastCheck = os.clock()
+        fixLagDisconnectNonForeign(LogService, "MessageOut")
+        fixLagDisconnectNonForeign(ScriptContext, "Error")
+        fixLagPruneConnections(RunService, "Heartbeat")
+        fixLagPruneConnections(RunService, "Stepped")
+        fixLagCleanupEffects()
     end)
-    for _, ch in Workspace:GetChildren() do qPush(ch) end
-    Workspace.DescendantAdded:Connect(function(d) task.delay(0.1, function() if d then qPush(d) end end) end)
-    local elapsed = 0
-    fpsBoosterConn = Services.RunService.Heartbeat:Connect(function(dt)
-        elapsed += dt
-        if elapsed < 0.08 then return end
-        elapsed = 0
-        if qSize <= 0 then return end
-        local batch = qPopBatch(120)
-        for i = 1, #batch do
-            local node = batch[i]
-            if node and node.Parent then optimize(node) end
-        end
-    end)
-    fpsBoosterRestore = function()
-        for obj, props in saved.instances do
-            if obj and obj.Parent then
-                for prop, val in props do pcall(function() obj[prop] = val end) end
-            end
-        end
-        for k, v in saved.lighting do
-            if k == "Terrain" then
-                local terrain = Workspace:FindFirstChildOfClass("Terrain")
-                if terrain and type(v) == "table" then
-                    for pk, pv in v do pcall(function() terrain[pk] = pv end) end
-                end
-            else
-                pcall(function() Lighting[k] = v end)
-            end
-        end
-    end
 end
 
 function setFixLag(on)
@@ -5452,75 +5444,42 @@ function formatEtaShort(sec)
     return string.format("%dm%ds", m, s)
 end
 
-function setupMoonPredictionWidget()
-    if moonPredictGui and moonPredictGui.Parent then moonPredictGui:Destroy() end
-    local pg = LocalPlayer:WaitForChild("PlayerGui")
-    local sg = Instance.new("ScreenGui")
-    sg.Name = "NTMT_MoonPredict"
-    sg.ResetOnSpawn = false
-    sg.IgnoreGuiInset = true
-    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    sg.Parent = pg
-    moonPredictGui = sg
-    local frame = Instance.new("Frame")
-    frame.Name = "Panel"
-    frame.AnchorPoint = Vector2.new(1, 1)
-    frame.Position = UDim2.new(1, -12, 1, -110)
-    frame.Size = UDim2.fromOffset(250, 150)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-    frame.BackgroundTransparency = 0.15
-    frame.BorderSizePixel = 0
-    frame.Parent = sg
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 10)
-    corner.Parent = frame
-    local title = Instance.new("TextLabel")
-    title.BackgroundTransparency = 1
-    title.Size = UDim2.new(1, -10, 0, 22)
-    title.Position = UDim2.fromOffset(8, 4)
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 13
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.TextColor3 = Color3.fromRGB(255, 220, 120)
-    title.Text = "Coming Soon"
-    title.Parent = frame
-    local list = Instance.new("Frame")
-    list.Name = "List"
-    list.BackgroundTransparency = 1
-    list.Position = UDim2.fromOffset(8, 28)
-    list.Size = UDim2.new(1, -16, 1, -32)
-    list.Parent = frame
-    local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 4)
-    layout.Parent = list
-    local rows = {}
-    for i = 1, 4 do
-        local row = Instance.new("TextLabel")
-        row.BackgroundTransparency = 1
-        row.Size = UDim2.new(1, 0, 0, 24)
-        row.Font = Enum.Font.Gotham
-        row.TextSize = 12
-        row.TextXAlignment = Enum.TextXAlignment.Left
-        row.TextColor3 = Color3.fromRGB(230, 230, 230)
-        row.Text = "..."
-        row.Parent = list
-        rows[i] = row
-    end
-    task.spawn(function()
-        while moonPredictGui and moonPredictGui.Parent do
-            local events = getMoonPredictionRows(4)
-            for i = 1, 4 do
-                local ev = events[i]
-                if ev then
-                    local prefix = ev.now and "" or "in "
-                    rows[i].Text = string.format("%s  %s%s", ev.name, prefix, formatEtaShort(ev.eta))
-                else
-                    rows[i].Text = "—"
-                end
-            end
-            task.wait(1)
+function getWeatherPredictionList(limit)
+    limit = limit or 12
+    local out = {}
+    for _, ev in ipairs(upcomingWeatherEvents(400)) do
+        if (ev.eta or 0) > 0 then
+            out[#out + 1] = ev
+            if #out >= limit then break end
         end
-    end)
+    end
+    return out
+end
+
+function buildWeatherPredictText()
+    local lines = {}
+    for _, ev in ipairs(getWeatherPredictionList(12)) do
+        lines[#lines + 1] = string.format("%s | %s", ev.name, formatEtaLong(ev.eta))
+    end
+    return #lines > 0 and table.concat(lines, "\n") or "No upcoming events"
+end
+
+function buildWeatherLiveText()
+    local cur = weatherAtUnix(os.time())
+    if not cur then return "— | —" end
+    local name = normalizeMoonDisplayName(cur.name or cur.phaseName or "?")
+    return string.format("%s | %s", name, formatEtaLong(cur.secsLeft or 0))
+end
+
+function refreshWeatherTab()
+    xpcall(function()
+        if weatherPredictPara and type(weatherPredictPara.SetDesc) == "function" then
+            weatherPredictPara:SetDesc(buildWeatherPredictText())
+        end
+        if weatherLivePara and type(weatherLivePara.SetDesc) == "function" then
+            weatherLivePara:SetDesc(buildWeatherLiveText())
+        end
+    end, noopErr)
 end
 
 function applyUITheme(name)
@@ -5583,7 +5542,6 @@ task.defer(function()
     task.wait(0.8)
     markHubScreenGuis()
     clearFruitEsp()
-    setupMoonPredictionWidget()
     if selectedBgTheme and selectedBgTheme ~= "None" then applyHubBackgroundImage(selectedBgTheme) end
 end)
 
@@ -5691,14 +5649,20 @@ ShopTab:Dropdown({ Title = "Select Gears", Values = GearNames, Multi = true, All
         if type(v) == "string" then selectedBuyGears[v] = true elseif type(k) == "string" and v then selectedBuyGears[k] = true end
     end end
 end })
-ShopTab:Section({ Title = "Seed Shop (prediction)" })
-seedShopPredict = ShopTab:Paragraph({ Title = "name | qty | restock | price", Desc = "Loading..." })
-ShopTab:Section({ Title = "Seed Shop (live)" })
+ShopTab:Section({ Title = "SEED SHOP (PREDICTION)" })
+seedShopPredict = ShopTab:Paragraph({ Title = "name seed stock coming | amount | time coming | money", Desc = "Loading..." })
+ShopTab:Section({ Title = "SEED SHOP (LIVE)" })
 seedShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
-ShopTab:Section({ Title = "Gear Shop (prediction)" })
-gearShopPredict = ShopTab:Paragraph({ Title = "name | qty | restock | price", Desc = "Loading..." })
-ShopTab:Section({ Title = "Gear Shop (live)" })
+ShopTab:Section({ Title = "GEAR SHOP (PREDICTION)" })
+gearShopPredict = ShopTab:Paragraph({ Title = "name gear stock coming | amount | time coming | money", Desc = "Loading..." })
+ShopTab:Section({ Title = "GEAR SHOP (LIVE)" })
 gearShopLive = ShopTab:Paragraph({ Title = "name | amount | price", Desc = "Loading..." })
+
+WeatherTab = Window:Tab({ Title = "Weather", Icon = "cloud-sun" })
+WeatherTab:Section({ Title = "WEATHER PREDICTION" })
+weatherPredictPara = WeatherTab:Paragraph({ Title = "weather name | when coming", Desc = "Loading..." })
+WeatherTab:Section({ Title = "WEATHER (LIVE)" })
+weatherLivePara = WeatherTab:Paragraph({ Title = "name weather right now | when end", Desc = "Loading..." })
 
 ServerTab = Window:Tab({ Title = "Server Hop", Icon = "globe" })
 makeToggle(ServerTab, "Auto Hop Server", "Hop every 15s (skip same server)", "ftgs_AutoHop")
@@ -5775,7 +5739,7 @@ SettingsTab:Input({ Title = "Visual Money", Value = (visualMoneyAmount and visua
     applyVisualMoney()
     saveConfig()
 end })
-SettingsTab:Toggle({ Title = "Fix Lag", Desc = "FPS boost — less particles/shadows", Default = genv.ftgs_FixLag or false, Callback = function(s) setFixLag(s) end })
+SettingsTab:Toggle({ Title = "Fix Lag", Desc = "Prune bad connections + cleanup stray effects", Default = genv.ftgs_FixLag or false, Callback = function(s) setFixLag(s) end })
 SettingsTab:Section({ Title = "Auto Execute" })
 SettingsTab:Input({ Title = "Script URL (optional)", Value = genv.NTMT_SCRIPT_URL or "", Placeholder = "raw github link if no readfile", Callback = function(v)
     genv.NTMT_SCRIPT_URL = v or ""
@@ -5835,10 +5799,28 @@ end)
 task.spawn(function()
     while true do
         if genv.ftgs_AutoFavoriteSelect then safeLoop(tryFavoriteSelectedOnce) end
+        task.wait(FAVORITE_TICK)
+    end
+end)
+
+task.spawn(function()
+    while true do
         if genv.ftgs_AutoUnfavoriteSelect then safeLoop(tryUnfavoriteSelectedOnce) end
+        task.wait(FAVORITE_TICK)
+    end
+end)
+
+task.spawn(function()
+    while true do
         if genv.ftgs_AutoFavoriteAll then safeLoop(tryFavoriteAllOnce) end
+        task.wait(FAVORITE_TICK)
+    end
+end)
+
+task.spawn(function()
+    while true do
         if genv.ftgs_AutoUnfavoriteAll then safeLoop(tryUnfavoriteAllOnce) end
-        task.wait(0.01)
+        task.wait(FAVORITE_TICK)
     end
 end)
 
@@ -5918,6 +5900,7 @@ task.spawn(function()
     task.wait(2)
     refreshLive()
     refreshPredict()
+    refreshWeatherTab()
     local stockRoot = Services.ReplicatedStorage:FindFirstChild("StockValues")
     if stockRoot then
         for _, shop in { "SeedShop", "GearShop" } do
@@ -5933,6 +5916,7 @@ task.spawn(function()
     task.spawn(function()
         while true do
             refreshPredict()
+            refreshWeatherTab()
             task.wait(1)
         end
     end)
